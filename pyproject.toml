@@ -1,0 +1,75 @@
+[project]
+name = "zelos-opal"
+version = "0.1.0"
+description = "Zelos extension for OPAL-RT real-time simulation systems"
+authors = [{ name = "Zelos", email = "dev@zeloscloud.io" }]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["zelos", "extension", "opal-rt", "real-time", "simulation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "zelos-sdk",
+]
+
+[project.urls]
+Homepage = "https://github.com/zeloscloud/zelos-opal"
+Repository = "https://github.com/zeloscloud/zelos-opal"
+Issues = "https://github.com/zeloscloud/zelos-opal/issues"
+Documentation = "https://docs.zeloscloud.io/extensions"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.24.0",
+    "pre-commit>=4.3.0",
+    "ruff>=0.14.2",
+    "tomli>=2.3.0; python_version < '3.11'",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["zelos_opal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--log-cli-level=INFO"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+    "PTH",  # flake8-use-pathlib
+]
+ignore = [
+    "B008",   # function call in defaults (common in decorators)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["PTH123"]  # Allow open() in scripts
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

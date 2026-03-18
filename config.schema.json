@@ -1,0 +1,45 @@
+{
+  "$comment": "This schema defines the configuration UI in Zelos App. See https://docs.zeloscloud.io/sdk/how-to/develop-extensions/#configuration for full widget reference.",
+  "type": "object",
+  "title": "OPAL-RT Extension Configuration",
+  "description": "Configure the OPAL-RT extension",
+  "properties": {
+    "demo": {
+      "type": "boolean",
+      "title": "Demo Mode",
+      "description": "Run with built-in simulator instead of a real OPAL-RT target",
+      "default": false,
+      "ui:widget": "toggle"
+    },
+    "endpoint": {
+      "type": "string",
+      "title": "Target Endpoint",
+      "description": "OPAL-RT target hostname or IP address with port",
+      "default": "localhost:5100",
+      "ui:placeholder": "host:port"
+    },
+    "poll_interval": {
+      "type": "number",
+      "title": "Poll Interval (seconds)",
+      "description": "Data acquisition interval",
+      "minimum": 0.01,
+      "maximum": 60.0,
+      "default": 1.0,
+      "ui:widget": "range"
+    },
+    "log_level": {
+      "type": "string",
+      "title": "Log Level",
+      "enum": [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR"
+      ],
+      "default": "INFO"
+    }
+  },
+  "required": [
+    "endpoint"
+  ]
+}
