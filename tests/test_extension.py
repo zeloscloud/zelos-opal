@@ -8,6 +8,7 @@ from zelos_opal.constants import (
     VariableInfo,
     sanitize_name,
 )
+from zelos_opal.extension import _common_prefix, _split_signal_path
 
 # ---------------------------------------------------------------------------
 # MockBridge — deterministic stand-in for LiveBridge
@@ -389,3 +390,145 @@ def test_stop_tolerates_disconnect_error(check) -> None:
     monitor.running = True
     monitor.stop()
     check.that(monitor.running, "is false")
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical signal path integration tests
+# ---------------------------------------------------------------------------
+
+_HIER_PATHS = [
+    "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1",
+    "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_SWITCH/port1",
+    "Model/Sub/CAN_Main/CH00_Main/Data_2/Out1/port1",
+]
+
+
+class HierarchicalMockBridge(MockBridge):
+    """MockBridge with realistic hierarchical OPAL-RT signal paths."""
+
+    SIGNALS = [
+        SignalInfo(name="signal1", path=_HIER_PATHS[0]),
+        SignalInfo(name="signal1", path=_HIER_PATHS[1]),
+        SignalInfo(name="signal1", path=_HIER_PATHS[2]),
+    ]
+
+    def get_signal_names_for_group(self, group: int) -> list[str]:
+        return list(_HIER_PATHS) if group == 1 else []
+
+    def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
+        return AcquisitionFrame(
+            signal_values=(1.0, 2.0, 3.0),
+            sim_time=1.0,
+            sample_rate=1000.0,
+            time_step=acq_time_step,
+            end_frame=True,
+        )
+
+
+def test_common_prefix(check) -> None:
+    check.that(_common_prefix([]), "==", "")
+    check.that(_common_prefix(["a/b/c"]), "==", "a/b/")
+    check.that(
+        _common_prefix(["Model/Sub/CAN_Control/x", "Model/Sub/CAN_Main/y"]),
+        "==",
+        "Model/Sub/",
+    )
+
+
+def test_split_signal_path_hierarchy(check) -> None:
+    prefix = "Model/Sub/"
+    evt, fld = _split_signal_path(
+        "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1", prefix
+    )
+    check.that(evt, "==", "CAN_Control/CH00/Data_1_TRIM")
+    check.that(fld, "==", "Data_1_RAW")
+
+
+def test_split_signal_path_preserves_case(check) -> None:
+    evt, fld = _split_signal_path("Prefix/Block_A/Signal_X/port1", "Prefix/")
+    check.that(evt, "==", "Block_A")
+    check.that(fld, "==", "Signal_X")
+
+
+def test_split_signal_path_fallbacks(check) -> None:
+    evt, fld = _split_signal_path("port1", "")
+    check.that(evt, "==", "signals")
+
+    evt, fld = _split_signal_path("single_name", "")
+    check.that(evt, "==", "signals")
+    check.that(fld, "==", "single_name")
+
+
+def test_discover_builds_hierarchical_events(check) -> None:
+    bridge = HierarchicalMockBridge()
+    monitor = _make_monitor(bridge)
+    monitor.start()
+
+    mapping = monitor._group_mapping
+    check.that(1 in mapping, "is true")
+
+    events = {evt for evt, _ in mapping[1]}
+    check.that("CAN_Control/CH00/Data_1_TRIM" in events, "is true")
+    check.that("CAN_Main/CH00_Main/Data_2" in events, "is true")
+
+    fields_trim = [fld for evt, fld in mapping[1] if evt == "CAN_Control/CH00/Data_1_TRIM"]
+    check.that("Data_1_RAW" in fields_trim, "is true")
+    check.that("Data_1_SWITCH" in fields_trim, "is true")
+    monitor.stop()
+
+
+def test_discover_deduplicates_fields(check) -> None:
+    """Two identical signal paths get distinct field names via dedup suffix."""
+    dup_paths = [
+        "M/S/Block/Out",
+        "M/S/Block/Out",
+    ]
+
+    class DupBridge(MockBridge):
+        SIGNALS = [
+            SignalInfo(name="s", path=dup_paths[0]),
+            SignalInfo(name="s", path=dup_paths[1]),
+        ]
+
+        def get_signal_names_for_group(self, group: int) -> list[str]:
+            return list(dup_paths) if group == 1 else []
+
+        def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
+            return AcquisitionFrame(signal_values=(1.0, 2.0), end_frame=True)
+
+    monitor = _make_monitor(DupBridge())
+    monitor.start()
+    fields = [fld for _, fld in monitor._group_mapping[1]]
+    check.that(fields, "==", ["Out", "Out_1"])
+    monitor.stop()
+
+
+def test_hierarchical_source_log(check) -> None:
+    """Verify source.log() works for /-separated event names end-to-end."""
+    bridge = HierarchicalMockBridge()
+    monitor = _make_monitor(bridge)
+    monitor.start()
+
+    evt_name = "CAN_Control/CH00/Data_1_TRIM"
+    logged = False
+    try:
+        monitor.source.log(evt_name, {"Data_1_RAW": 1.0, "Data_1_SWITCH": 2.0})
+        logged = True
+    except Exception as exc:
+        check.that(False, "is true", f"source.log raised: {exc}")
+    check.that(logged, "is true")
+    monitor.stop()
+
+
+def test_actions_expose_full_paths_not_event_names(check) -> None:
+    """Action choices must return full OPAL-RT paths for the RT-LAB API."""
+    bridge = HierarchicalMockBridge()
+    monitor = _make_monitor(bridge)
+    monitor.start()
+    _setup_actions(monitor)
+    from zelos_opal.actions import _signal_choices
+
+    choices = _signal_choices()
+    for path in _HIER_PATHS:
+        check.that(path in choices, "is true", f"missing: {path}")
+    monitor.stop()
