@@ -23,7 +23,7 @@ def init(monitor: Any) -> None:
 def register() -> None:
     """Register all OPAL actions with the Zelos SDK."""
     for fn in _actions:
-        actions_registry.register(fn, name="opal")
+        actions_registry.register(fn)
 
 
 # ---------------------------------------------------------------------------
@@ -32,15 +32,15 @@ def register() -> None:
 
 
 def _signal_choices() -> list[str]:
-    return [s.name for s in _monitor.signal_infos] if _monitor else []
+    return [s.path for s in _monitor.signal_infos] if _monitor else []
 
 
 def _control_signal_choices() -> list[str]:
-    return [s.name for s in _monitor.control_signal_infos] if _monitor else []
+    return [s.path for s in _monitor.control_signal_infos] if _monitor else []
 
 
 def _parameter_choices() -> list[str]:
-    return [p.name for p in _monitor.param_infos] if _monitor else []
+    return [p.path for p in _monitor.param_infos] if _monitor else []
 
 
 def _variable_choices() -> list[str]:

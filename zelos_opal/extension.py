@@ -13,7 +13,9 @@ from any thread — actions use them without knowing about the plumbing.
 from __future__ import annotations
 
 import logging
+import os.path
 import queue
+import re
 import threading
 import time
 from typing import Any
@@ -31,6 +33,37 @@ from zelos_opal.constants import (
 
 logger = logging.getLogger(__name__)
 
+_PORT_RE = re.compile(r"^port\d+$", re.IGNORECASE)
+
+
+def _common_prefix(paths: list[str]) -> str:
+    """Longest common directory prefix across *paths*."""
+    if not paths:
+        return ""
+    prefix = os.path.commonprefix(paths)
+    slash = prefix.rfind("/")
+    return prefix[: slash + 1] if slash >= 0 else ""
+
+
+def _split_signal_path(path: str, prefix: str) -> tuple[str, str]:
+    """Split a signal path into ``(event_name, field_name)``.
+
+    * Strips the shared model prefix and any trailing ``portN``.
+    * All-but-last remaining segments → event (underscore-joined).
+    * Last segment → field.
+    """
+    remainder = path[len(prefix) :] if path.startswith(prefix) else path
+    parts = [p for p in remainder.split("/") if p]
+    if parts and _PORT_RE.match(parts[-1]):
+        parts = parts[:-1]
+    if not parts:
+        return ("signals", sanitize_name(path))
+    if len(parts) == 1:
+        return ("signals", sanitize_name(parts[0]))
+    event = "_".join(sanitize_name(p) for p in parts[:-1])
+    field = sanitize_name(parts[-1])
+    return (event, field)
+
 
 class OpalMonitor:
     """Connects to an OPAL-RT target, discovers model contents, and streams signals."""
@@ -45,12 +78,23 @@ class OpalMonitor:
         self.param_infos: list[ParameterInfo] = []
         self.variable_infos: list[VariableInfo] = []
 
-        self._group_fields: dict[int, list[str]] = {}
+        self._group_mapping: dict[int, list[tuple[str, str]]] = {}
         self._cmd_queue: queue.Queue[tuple[Any, tuple, dict, threading.Event, dict]] = queue.Queue()
 
         self.source = zelos_sdk.TraceSourceCacheLast("opal")
-        self._define_monitoring_schema()
-
+        self.source.add_event(
+            "model_info",
+            [
+                zelos_sdk.TraceEventFieldMetadata("state", zelos_sdk.DataType.UInt8),
+                zelos_sdk.TraceEventFieldMetadata("signal_count", zelos_sdk.DataType.Int64),
+                zelos_sdk.TraceEventFieldMetadata("parameter_count", zelos_sdk.DataType.Int64),
+            ],
+        )
+        self.source.add_value_table(
+            "model_info",
+            "state",
+            {s.value: s.name for s in ModelState},
+        )
         self._bridge = LiveBridge(rtlab_path=config.get("rtlab_path"))
 
     # ------------------------------------------------------------------
@@ -86,7 +130,7 @@ class OpalMonitor:
         if not self.control_signal_infos:
             return {}
         values = self._dispatch(self._bridge.get_control_signals)
-        names = [s.name for s in self.control_signal_infos]
+        names = [s.path for s in self.control_signal_infos]
         return dict(zip(names, values, strict=False))
 
     def set_control_signals(self, subsystem_id: int, values: tuple[float, ...]) -> None:
@@ -182,55 +226,43 @@ class OpalMonitor:
         while self.running:
             self._drain_commands()
             self.model_state = self._bridge.get_model_state()
+            self.source.model_info.log(
+                state=self.model_state.value,
+                signal_count=len(self.signal_infos),
+                parameter_count=len(self.param_infos),
+            )
             if self.model_state != ModelState.RUNNING:
                 logger.info(
                     "Model state is %s — waiting for RUNNING",
                     self.model_state.name,
                 )
                 self._sleep_with_drain(poll)
-                if not self._group_fields:
+                if not self._group_mapping:
                     self._discover()
                 continue
 
             any_end_frame = False
-            for group, fields in self._group_fields.items():
+            for group, mapping in self._group_mapping.items():
                 try:
                     frame = self._bridge.acquire(group, acq_time_step)
                 except Exception:
                     logger.exception("Acquisition error for group %d", group)
                     continue
 
-                data = {
-                    field: frame.signal_values[i]
-                    for i, field in enumerate(fields)
-                    if i < len(frame.signal_values)
-                }
-                if data:
-                    self.source.signals.log(**data)
-
-                self.source.acq_monitor.log(
-                    missed_data=frame.missed_data,
-                    sim_time=frame.sim_time,
-                    sample_rate=frame.sample_rate,
-                )
+                by_event: dict[str, dict[str, float]] = {}
+                for i, (evt, fld) in enumerate(mapping):
+                    if i < len(frame.signal_values):
+                        by_event.setdefault(evt, {})[fld] = frame.signal_values[i]
+                for evt, data in by_event.items():
+                    getattr(self.source, evt).log(**data)
                 any_end_frame = any_end_frame or frame.end_frame
 
-            if any_end_frame or not self._group_fields:
+            if any_end_frame or not self._group_mapping:
                 self._sleep_with_drain(poll)
 
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
-
-    def _define_monitoring_schema(self) -> None:
-        self.source.add_event(
-            "acq_monitor",
-            [
-                zelos_sdk.TraceEventFieldMetadata("missed_data", zelos_sdk.DataType.Float64),
-                zelos_sdk.TraceEventFieldMetadata("sim_time", zelos_sdk.DataType.Float64, "s"),
-                zelos_sdk.TraceEventFieldMetadata("sample_rate", zelos_sdk.DataType.Float64, "Hz"),
-            ],
-        )
 
     def _discover(self) -> None:
         """Query the bridge for all model contents and build the trace schema."""
@@ -239,29 +271,48 @@ class OpalMonitor:
         self.param_infos = self._bridge.get_parameters_description()
         self.variable_infos = self._bridge.get_variables_description()
 
-        self._group_fields = {}
+        raw_groups: dict[int, list[str]] = {}
         for group in range(1, 17):
             names = self._bridge.get_signal_names_for_group(group)
             if names:
-                self._group_fields[group] = [sanitize_name(n) for n in names]
+                raw_groups[group] = names
 
-        if not self._group_fields and self.signal_infos:
-            self._group_fields[1] = [sanitize_name(s.name) for s in self.signal_infos]
+        if not raw_groups and self.signal_infos:
+            raw_groups[1] = [s.path for s in self.signal_infos]
 
-        all_fields = [f for fields in self._group_fields.values() for f in fields]
-        if all_fields:
-            fields = [
-                zelos_sdk.TraceEventFieldMetadata(name, zelos_sdk.DataType.Float64)
-                for name in all_fields
-            ]
-            self.source.add_event("signals", fields)
+        all_paths = [p for paths in raw_groups.values() for p in paths]
+        prefix = _common_prefix(all_paths)
+
+        # Build (event, field) mapping per acq group; deduplicate per event.
+        event_fields: dict[str, dict[str, None]] = {}
+        self._group_mapping = {}
+
+        for group, paths in raw_groups.items():
+            mapping: list[tuple[str, str]] = []
+            for path in paths:
+                evt, fld = _split_signal_path(path, prefix)
+                base = fld
+                idx = 1
+                while fld in event_fields.get(evt, {}):
+                    fld = f"{base}_{idx}"
+                    idx += 1
+                event_fields.setdefault(evt, {})[fld] = None
+                mapping.append((evt, fld))
+            self._group_mapping[group] = mapping
+
+        for evt, fields in event_fields.items():
+            self.source.add_event(
+                evt,
+                [zelos_sdk.TraceEventFieldMetadata(f, zelos_sdk.DataType.Float64) for f in fields],
+            )
 
         logger.info(
             "Discovered %d signals, %d control signals, %d parameters, %d variables "
-            "in %d acq group(s)",
+            "in %d acq group(s), %d trace events",
             len(self.signal_infos),
             len(self.control_signal_infos),
             len(self.param_infos),
             len(self.variable_infos),
-            len(self._group_fields),
+            len(raw_groups),
+            len(event_fields),
         )

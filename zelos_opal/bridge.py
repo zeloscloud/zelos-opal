@@ -104,8 +104,8 @@ class LiveBridge:
     def get_model_state(self) -> ModelState:
         state, _ = self._api.GetModelState()
         try:
-            return ModelState(state)
-        except ValueError:
+            return ModelState(int(state))
+        except (ValueError, TypeError):
             return ModelState.DISCONNECTED
 
     # ------------------------------------------------------------------
@@ -116,7 +116,7 @@ class LiveBridge:
         raw = self._api.GetSignalsDescription()
         return [
             SignalInfo(
-                signal_type=(SignalType(sig[0]) if sig[0] in SignalType else SignalType.DYNAMIC),
+                signal_type=SignalType.from_raw(sig[0]),
                 subsystem_id=sig[1],
                 path=sig[2],
                 name=sig[3],
@@ -141,10 +141,10 @@ class LiveBridge:
         self._api.SetSignalsByName(names, values)
 
     def acquire_signal_control(self, subsystem_id: int) -> None:
-        self._api.GetSignalControl(subsystem_id, ControlOp.ACQUIRE)
+        self._api.GetSignalControl(subsystem_id, ControlOp.ACQUIRE.value)
 
     def release_signal_control(self, subsystem_id: int) -> None:
-        self._api.GetSignalControl(subsystem_id, ControlOp.RELEASE)
+        self._api.GetSignalControl(subsystem_id, ControlOp.RELEASE.value)
 
     # ------------------------------------------------------------------
     # Control signals
@@ -188,10 +188,10 @@ class LiveBridge:
         self._api.SetParametersByName(names, values)
 
     def acquire_parameter_control(self) -> None:
-        self._api.GetParameterControl(ControlOp.ACQUIRE)
+        self._api.GetParameterControl(ControlOp.ACQUIRE.value)
 
     def release_parameter_control(self) -> None:
-        self._api.GetParameterControl(ControlOp.RELEASE)
+        self._api.GetParameterControl(ControlOp.RELEASE.value)
 
     # ------------------------------------------------------------------
     # Variables

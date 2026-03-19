@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import re
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Enumerations
@@ -36,6 +37,14 @@ class SignalType(enum.IntEnum):
     ACQUISITION = 0
     DYNAMIC = 1
     CONTROL = 2
+
+    @classmethod
+    def from_raw(cls, value: Any) -> SignalType:
+        """Coerce an RT-LAB SWIG enum / int to a ``SignalType``."""
+        try:
+            return cls(int(value))
+        except (ValueError, TypeError):
+            return cls.DYNAMIC
 
 
 class ControlOp(enum.IntEnum):

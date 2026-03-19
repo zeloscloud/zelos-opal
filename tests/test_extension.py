@@ -35,8 +35,8 @@ class MockBridge:
         self.connected = False
         self.signal_control_held = False
         self.param_control_held = False
-        self._signal_values: dict[str, float] = {"voltage": 120.0, "current": 50.0}
-        self._param_values: dict[str, float] = {"gain": 1.0}
+        self._signal_values: dict[str, float] = {"mock/v": 120.0, "mock/i": 50.0}
+        self._param_values: dict[str, float] = {"mock/ctrl": 1.0}
         self._variable_values: dict[str, float] = {"K": 10.0}
         self._control_signal_values: tuple[float, ...] = (0.0,)
 
@@ -220,16 +220,16 @@ def test_status_when_running(check) -> None:
 
 def test_read_signals(check) -> None:
     monitor = _make_monitor()
-    result = monitor.read_signals(("voltage", "current"))
-    check.that(result["voltage"], "==", 120.0)
-    check.that(result["current"], "==", 50.0)
+    result = monitor.read_signals(("mock/v", "mock/i"))
+    check.that(result["mock/v"], "==", 120.0)
+    check.that(result["mock/i"], "==", 50.0)
 
 
 def test_set_signals(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
-    monitor.set_signals(("voltage",), (240.0,))
-    check.that(bridge._signal_values["voltage"], "==", 240.0)
+    monitor.set_signals(("mock/v",), (240.0,))
+    check.that(bridge._signal_values["mock/v"], "==", 240.0)
     check.that(bridge.signal_control_held, "is false")
 
 
@@ -238,7 +238,7 @@ def test_read_control_signals(check) -> None:
     monitor = _make_monitor(bridge)
     monitor.start()
     result = monitor.read_control_signals()
-    check.that(result["switch_pos"], "==", 0.0)
+    check.that(result["mock/ctrl"], "==", 0.0)
     monitor.stop()
 
 
@@ -254,15 +254,15 @@ def test_set_control_signals(check) -> None:
 
 def test_read_parameters(check) -> None:
     monitor = _make_monitor()
-    result = monitor.read_parameters(("gain",))
-    check.that(result["gain"], "==", 1.0)
+    result = monitor.read_parameters(("mock/ctrl",))
+    check.that(result["mock/ctrl"], "==", 1.0)
 
 
 def test_set_parameters(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
-    monitor.set_parameters(("gain",), (2.5,))
-    check.that(bridge._param_values["gain"], "==", 2.5)
+    monitor.set_parameters(("mock/ctrl",), (2.5,))
+    check.that(bridge._param_values["mock/ctrl"], "==", 2.5)
     check.that(bridge.param_control_held, "is false")
 
 
@@ -322,8 +322,8 @@ def test_action_read_signal(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import read_signal
 
-    result = read_signal("voltage")
-    check.that(result["voltage"], "==", 120.0)
+    result = read_signal("mock/v")
+    check.that(result["mock/v"], "==", 120.0)
 
 
 def test_action_set_signal(check) -> None:
@@ -332,8 +332,8 @@ def test_action_set_signal(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import set_signal
 
-    set_signal("voltage", 240.0)
-    check.that(bridge._signal_values["voltage"], "==", 240.0)
+    set_signal("mock/v", 240.0)
+    check.that(bridge._signal_values["mock/v"], "==", 240.0)
 
 
 def test_action_read_parameter(check) -> None:
@@ -341,8 +341,8 @@ def test_action_read_parameter(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import read_parameter
 
-    result = read_parameter("gain")
-    check.that(result["gain"], "==", 1.0)
+    result = read_parameter("mock/ctrl")
+    check.that(result["mock/ctrl"], "==", 1.0)
 
 
 def test_action_set_parameter(check) -> None:
@@ -351,8 +351,8 @@ def test_action_set_parameter(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import set_parameter
 
-    set_parameter("gain", 2.5)
-    check.that(bridge._param_values["gain"], "==", 2.5)
+    set_parameter("mock/ctrl", 2.5)
+    check.that(bridge._param_values["mock/ctrl"], "==", 2.5)
 
 
 def test_action_dynamic_choices(check) -> None:
@@ -367,9 +367,9 @@ def test_action_dynamic_choices(check) -> None:
         _variable_choices,
     )
 
-    check.that(_signal_choices(), "==", ["voltage", "current"])
-    check.that(_control_signal_choices(), "==", ["switch_pos"])
-    check.that(_parameter_choices(), "==", ["gain"])
+    check.that(_signal_choices(), "==", ["mock/v", "mock/i"])
+    check.that(_control_signal_choices(), "==", ["mock/ctrl"])
+    check.that(_parameter_choices(), "==", ["mock/ctrl"])
     check.that(_variable_choices(), "==", ["K"])
     monitor.stop()
 
