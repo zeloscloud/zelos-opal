@@ -148,6 +148,7 @@ def test_sanitize_name(check) -> None:
     check.that(sanitize_name("va_rms"), "==", "va_rms")
     check.that(sanitize_name("port1(1)"), "==", "port1_1")
     check.that(sanitize_name("model/sub/signal"), "==", "model_sub_signal")
+    check.that(sanitize_name("Data_10_RAW"), "==", "Data_10_RAW")
     check.that(sanitize_name(""), "==", "signal")
 
 

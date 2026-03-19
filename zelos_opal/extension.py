@@ -49,7 +49,7 @@ def _split_signal_path(path: str, prefix: str) -> tuple[str, str]:
     """Split a signal path into ``(event_name, field_name)``.
 
     * Strips the shared model prefix and any trailing ``portN``.
-    * All-but-last remaining segments → event (underscore-joined).
+    * All-but-last remaining segments → event (``/``-joined, matching OPAL-RT hierarchy).
     * Last segment → field.
     """
     remainder = path[len(prefix) :] if path.startswith(prefix) else path
@@ -60,7 +60,7 @@ def _split_signal_path(path: str, prefix: str) -> tuple[str, str]:
         return ("signals", sanitize_name(path))
     if len(parts) == 1:
         return ("signals", sanitize_name(parts[0]))
-    event = "_".join(sanitize_name(p) for p in parts[:-1])
+    event = "/".join(sanitize_name(p) for p in parts[:-1])
     field = sanitize_name(parts[-1])
     return (event, field)
 
@@ -254,7 +254,7 @@ class OpalMonitor:
                     if i < len(frame.signal_values):
                         by_event.setdefault(evt, {})[fld] = frame.signal_values[i]
                 for evt, data in by_event.items():
-                    getattr(self.source, evt).log(**data)
+                    self.source.log(evt, data)
                 any_end_frame = any_end_frame or frame.end_frame
 
             if any_end_frame or not self._group_mapping:

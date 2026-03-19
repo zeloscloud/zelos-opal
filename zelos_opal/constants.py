@@ -111,4 +111,4 @@ def sanitize_name(name: str) -> str:
     """Convert an RT-LAB signal/parameter name to a valid trace field name."""
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("_").lower() or "signal"
+    return sanitized.strip("_") or "signal"
