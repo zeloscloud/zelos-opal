@@ -4,28 +4,37 @@
   "title": "OPAL-RT Extension Configuration",
   "description": "Configure the OPAL-RT extension",
   "properties": {
-    "demo": {
-      "type": "boolean",
-      "title": "Demo Mode",
-      "description": "Run with built-in simulator instead of a real OPAL-RT target",
-      "default": false,
-      "ui:widget": "toggle"
-    },
-    "endpoint": {
+    "project_path": {
       "type": "string",
-      "title": "Target Endpoint",
-      "description": "OPAL-RT target hostname or IP address with port",
-      "default": "localhost:5100",
-      "ui:placeholder": "host:port"
+      "title": "Project File",
+      "description": "Path to the RT-LAB project (.llp) file",
+      "ui:widget": "file-picker",
+      "ui:placeholder": "C:/path/to/model.llp"
+    },
+    "acq_time_step_ms": {
+      "type": "number",
+      "title": "Acquisition Time Step (ms)",
+      "description": "Time step for data acquisition sampling in milliseconds",
+      "minimum": 0.1,
+      "maximum": 1000,
+      "default": 1,
+      "ui:widget": "range"
     },
     "poll_interval": {
       "type": "number",
       "title": "Poll Interval (seconds)",
-      "description": "Data acquisition interval",
-      "minimum": 0.01,
+      "description": "Delay between acquisition frames",
+      "minimum": 0.001,
       "maximum": 60.0,
       "default": 1.0,
       "ui:widget": "range"
+    },
+    "rtlab_path": {
+      "type": "string",
+      "title": "RT-LAB Install Path",
+      "description": "Path to RT-LAB version directory (e.g. C:/OPAL-RT/RT-LAB/v2025.4.7.43). Leave blank for auto-discovery.",
+      "ui:widget": "folder-picker",
+      "ui:placeholder": "C:/OPAL-RT/RT-LAB/v2025.4.7.43"
     },
     "log_level": {
       "type": "string",
@@ -38,8 +47,5 @@
       ],
       "default": "INFO"
     }
-  },
-  "required": [
-    "endpoint"
-  ]
+  }
 }
