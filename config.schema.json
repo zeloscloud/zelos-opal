@@ -11,19 +11,10 @@
       "ui:widget": "file-picker",
       "ui:placeholder": "C:/path/to/model.llp"
     },
-    "acq_time_step_ms": {
-      "type": "number",
-      "title": "Acquisition Time Step (ms)",
-      "description": "Time step for data acquisition sampling in milliseconds",
-      "minimum": 0.1,
-      "maximum": 1000,
-      "default": 1,
-      "ui:widget": "range"
-    },
     "poll_interval": {
       "type": "number",
       "title": "Poll Interval (seconds)",
-      "description": "Delay between acquisition frames",
+      "description": "Delay between signal reads",
       "minimum": 0.001,
       "maximum": 60.0,
       "default": 1.0,

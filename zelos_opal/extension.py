@@ -28,12 +28,12 @@ from zelos_opal.constants import (
     ParameterInfo,
     SignalInfo,
     SignalType,
+    VariableInfo,
     sanitize_name,
 )
 
 logger = logging.getLogger(__name__)
 
-_ACQ_GROUP = 0
 _PORT_RE = re.compile(r"^port\d+$", re.IGNORECASE)
 
 
@@ -77,10 +77,9 @@ class OpalMonitor:
         self.signal_infos: list[SignalInfo] = []
         self.control_signal_infos: list[SignalInfo] = []
         self.param_infos: list[ParameterInfo] = []
+        self.variable_infos: list[VariableInfo] = []
 
-        self._dyn_signals: list[SignalInfo] = []
-        self._acq_mapping: list[tuple[str, str]] = []
-        self._acq_ready = False
+        self._trace_signals: list[tuple[str, str, str]] = []  # (path, event, field)
         self._cmd_queue: queue.Queue[tuple[Any, tuple, dict, threading.Event, dict]] = queue.Queue()
 
         self.source = zelos_sdk.TraceSourceCacheLast("opal")
@@ -141,6 +140,19 @@ class OpalMonitor:
 
         self._dispatch(_impl)
 
+    def read_variable(self, name: str) -> dict[str, float]:
+        infos = self._dispatch(self._bridge.get_variables_description)
+        for v in infos:
+            if v.name == name:
+                return {name: v.value}
+        raise ValueError(f"Variable not found: {name}")
+
+    def set_variable(self, name: str, value: float) -> None:
+        var = next((v for v in self.variable_infos if v.name == name), None)
+        if var is None:
+            raise ValueError(f"Variable not found: {name}")
+        self._dispatch(self._bridge.set_variable, var.var_id, value)
+
     # ------------------------------------------------------------------
     # Main-thread command dispatch
     # ------------------------------------------------------------------
@@ -190,19 +202,18 @@ class OpalMonitor:
     def stop(self) -> None:
         logger.info("Stopping OPAL-RT monitor")
         self.running = False
-        self._teardown_acquisition()
         try:
             self._bridge.disconnect()
         except Exception:
             logger.exception("Error disconnecting from RT-LAB")
 
     def run(self) -> None:
-        """Acquisition loop — streams RT-LAB signals to Zelos traces."""
-        acq_time_step = self.config.get("acq_time_step_ms", 1) / 1000
-        poll = self.config.get("poll_interval", 1.0)
+        """Poll loop — reads RT-LAB signals by name and streams to Zelos traces."""
         prev_state: ModelState | None = None
+        names = tuple(path for path, _, _ in self._trace_signals)
 
         while self.running:
+            poll = self.config.get("poll_interval", 1.0)
             self._drain_commands()
             self.model_state = self._bridge.get_model_state()
             self.source.model_info.log(
@@ -211,40 +222,34 @@ class OpalMonitor:
                 parameter_count=len(self.param_infos),
             )
             if self.model_state != ModelState.RUNNING:
-                logger.info(
-                    "Model state is %s — waiting for RUNNING",
-                    self.model_state.name,
-                )
+                if prev_state != self.model_state:
+                    logger.info("Model state is %s — waiting for RUNNING", self.model_state.name)
                 self._sleep_with_drain(poll)
                 prev_state = self.model_state
                 continue
 
             if prev_state != ModelState.RUNNING:
-                logger.info("Model entered RUNNING — setting up acquisition")
+                logger.info("Model entered RUNNING — polling signals")
                 prev_state = self.model_state
 
-            if not self._acq_ready:
-                self._setup_acquisition()
-                if not self._acq_ready:
-                    self._sleep_with_drain(poll)
-                    continue
+            if not names:
+                self._sleep_with_drain(poll)
+                continue
 
             try:
-                frame = self._bridge.acquire(_ACQ_GROUP, acq_time_step)
+                values = self._bridge.get_signals_by_name(names)
             except Exception:
-                logger.exception("Acquisition error")
+                logger.exception("Signal read error")
                 self._sleep_with_drain(poll)
                 continue
 
             by_event: dict[str, dict[str, float]] = {}
-            for i, (evt, fld) in enumerate(self._acq_mapping):
-                if i < len(frame.signal_values):
-                    by_event.setdefault(evt, {})[fld] = frame.signal_values[i]
+            for (_, evt, fld), val in zip(self._trace_signals, values, strict=False):
+                by_event.setdefault(evt, {})[fld] = val
             for evt, data in by_event.items():
                 self.source.log(evt, data)
 
-            if frame.end_frame:
-                self._sleep_with_drain(poll)
+            self._sleep_with_drain(poll)
 
     # ------------------------------------------------------------------
     # Discovery & acquisition setup
@@ -253,35 +258,33 @@ class OpalMonitor:
     def _discover(self) -> None:
         """Query the bridge for all model contents and build the trace schema.
 
-        Only DYNAMIC signals are included in the acquisition mapping — those are
-        the signals that ``SetDynSignalListForGroup`` loads into the acquisition
-        group.  ACQUISITION signals are pre-configured in the console subsystem
-        and CONTROL signals are accessed via ``GetSignalsByName``.
+        All output signals (DYNAMIC + ACQUISITION) are included for tracing via
+        ``GetSignalsByName`` polling.  CONTROL signals are omitted from tracing
+        (they are model inputs) but remain available through actions.
         """
         self.signal_infos = self._bridge.get_signals_description()
         self.control_signal_infos = self._bridge.get_control_signals_description()
         self.param_infos = self._bridge.get_parameters_description()
+        self.variable_infos = self._bridge.get_variables_description()
 
-        self._dyn_signals = [s for s in self.signal_infos if s.signal_type == SignalType.DYNAMIC]
+        traced_types = (SignalType.DYNAMIC, SignalType.ACQUISITION)
+        output_signals = [s for s in self.signal_infos if s.signal_type in traced_types]
 
-        all_paths = [s.path for s in self._dyn_signals]
+        all_paths = [s.path for s in output_signals]
         prefix = _common_prefix(all_paths)
 
         event_fields: dict[str, dict[str, None]] = {}
-        self._acq_mapping = []
+        self._trace_signals = []
 
-        for s in self._dyn_signals:
-            for elem in range(1, s.num_elements + 1):
-                evt, fld = _split_signal_path(s.path, prefix)
-                if s.num_elements > 1:
-                    fld = f"{fld}_{elem}"
-                base = fld
-                idx = 1
-                while fld in event_fields.get(evt, {}):
-                    fld = f"{base}_{idx}"
-                    idx += 1
-                event_fields.setdefault(evt, {})[fld] = None
-                self._acq_mapping.append((evt, fld))
+        for s in output_signals:
+            evt, fld = _split_signal_path(s.path, prefix)
+            base = fld
+            idx = 1
+            while fld in event_fields.get(evt, {}):
+                fld = f"{base}_{idx}"
+                idx += 1
+            event_fields.setdefault(evt, {})[fld] = None
+            self._trace_signals.append((s.path, evt, fld))
 
         for evt, fields in event_fields.items():
             meta = [
@@ -290,43 +293,10 @@ class OpalMonitor:
             self.source.add_event(evt, meta)
 
         logger.info(
-            "Discovered %d signals (%d dynamic), %d control signals, "
-            "%d parameters, %d trace events",
+            "Discovered %d signals (%d traced), %d control signals, %d parameters, %d trace events",
             len(self.signal_infos),
-            len(self._dyn_signals),
+            len(output_signals),
             len(self.control_signal_infos),
             len(self.param_infos),
             len(event_fields),
         )
-
-    def _setup_acquisition(self) -> None:
-        """Configure dynamic acquisition for all discovered DYNAMIC signals.
-
-        Follows the ``dynamic_acq`` example pattern: take acquisition control,
-        set the capacity, then load every signal by ``(id, element)`` pairs.
-        The Python API uses 1-based element indexing (C API uses 0-based).
-        """
-        if not self._dyn_signals:
-            return
-        flat: list[int] = []
-        for s in self._dyn_signals:
-            for elem in range(1, s.num_elements + 1):
-                flat.extend([s.subsystem_id, elem])
-        num_entries = len(flat) // 2
-        try:
-            self._bridge.setup_dynamic_acquisition(_ACQ_GROUP, tuple(flat), num_entries)
-            self._acq_ready = True
-            logger.info("Dynamic acquisition configured with %d signals", num_entries)
-        except Exception:
-            logger.warning("Failed to set up dynamic acquisition", exc_info=True)
-            self._acq_ready = False
-
-    def _teardown_acquisition(self) -> None:
-        """Release acquisition control if held."""
-        if not self._acq_ready:
-            return
-        try:
-            self._bridge.teardown_dynamic_acquisition(_ACQ_GROUP)
-        except Exception:
-            logger.warning("Failed to release acquisition control", exc_info=True)
-        self._acq_ready = False

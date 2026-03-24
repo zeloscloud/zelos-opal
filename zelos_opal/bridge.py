@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from zelos_opal.constants import (
-    AcquisitionFrame,
     ModelState,
     ParameterInfo,
     SignalInfo,
@@ -116,31 +115,13 @@ class LiveBridge:
         return [
             SignalInfo(
                 signal_type=SignalType.from_raw(sig[0]),
-                subsystem_id=sig[1],
+                signal_id=sig[1],
                 path=sig[2],
                 name=sig[3],
                 label=sig[4],
-                num_elements=sig[5],
             )
             for sig in raw
         ]
-
-    def setup_dynamic_acquisition(self, group: int, signal_list: tuple, count: int) -> None:
-        """Take control and configure *count* dynamic signals for *group* (0-based).
-
-        *signal_list* is a flat tuple of ``(id, element, id, element, …)``
-        matching the format expected by ``SetDynSignalListForGroup``.
-        """
-        try:
-            self._api.GetAcquisitionControl(1, group)
-        except Exception:
-            logger.debug("GetAcquisitionControl: may already hold control", exc_info=True)
-        self._api.SetMaxDynSignalForGroup(group, count)
-        self._api.SetDynSignalListForGroup(group, signal_list)
-
-    def teardown_dynamic_acquisition(self, group: int) -> None:
-        """Release acquisition control for *group* (0-based)."""
-        self._api.GetAcquisitionControl(0, group)
 
     def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._api.GetSignalsByName(names))
@@ -163,20 +144,13 @@ class LiveBridge:
         return [
             SignalInfo(
                 signal_type=SignalType.CONTROL,
-                subsystem_id=sig[1],
+                signal_id=sig[1],
                 path=sig[2],
                 name=sig[3],
                 label=sig[4],
-                num_elements=sig[5],
             )
             for sig in raw
         ]
-
-    def get_control_signals(self) -> tuple[float, ...]:
-        return tuple(self._api.GetControlSignals())
-
-    def set_control_signals(self, subsystem_id: int, values: tuple[float, ...]) -> None:
-        self._api.SetControlSignals(subsystem_id, values)
 
     # ------------------------------------------------------------------
     # Parameters
@@ -202,43 +176,16 @@ class LiveBridge:
         self._api.GetParameterControl(0)
 
     # ------------------------------------------------------------------
-    # Variables
+    # Variables (MATLAB workspace)
     # ------------------------------------------------------------------
 
     def get_variables_description(self) -> list[VariableInfo]:
         try:
             raw = self._api.GetVariablesDescription()
-            return [VariableInfo(name=v[0], value=float(v[1])) for v in raw]
+            return [VariableInfo(var_id=v[0], name=v[1], value=float(v[2])) for v in raw]
         except Exception:
-            logger.warning("GetVariablesDescription failed", exc_info=True)
+            logger.warning("GetVariablesDescription not available for this model", exc_info=True)
             return []
 
-    def get_variables_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
-        raw = self._api.GetVariablesByName(names)
-        return tuple(float(v) for v in raw)
-
-    def set_variables(self, names: tuple[str, ...], values: tuple[float, ...]) -> None:
-        # RT-LAB SetVariables expects variableInfo in the same format as
-        # GetVariablesDescription output.  The exact tuple layout depends on the
-        # compiled model; pass (name, value) pairs which matches the common case.
-        pairs = tuple(zip(names, values, strict=True))
-        self._api.SetVariables(pairs)
-
-    # ------------------------------------------------------------------
-    # Acquisition (tracing)
-    # ------------------------------------------------------------------
-
-    def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
-        """Acquire one frame from *acq_group* (0-based)."""
-        sim_signals, mon_signals, sim_time_step, end_frame = self._api.GetAcqGroupSyncSignals(
-            acq_group, 0, 0, 1, acq_time_step
-        )
-        missed_data, _offset, sim_time, sample_sec = mon_signals
-        return AcquisitionFrame(
-            signal_values=tuple(sim_signals),
-            missed_data=missed_data,
-            sim_time=sim_time,
-            sample_rate=sample_sec,
-            time_step=sim_time_step,
-            end_frame=bool(end_frame),
-        )
+    def set_variable(self, var_id: int, value: float) -> None:
+        self._api.SetVariables(((var_id, value),))

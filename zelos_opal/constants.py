@@ -60,8 +60,7 @@ class SignalInfo:
     path: str = ""
     label: str = ""
     signal_type: SignalType = SignalType.DYNAMIC
-    subsystem_id: int = 0
-    num_elements: int = 1
+    signal_id: int = 0
 
 
 @dataclass
@@ -77,22 +76,11 @@ class ParameterInfo:
 
 @dataclass
 class VariableInfo:
-    """Metadata for one RT-LAB workspace variable."""
+    """Metadata for one RT-LAB MATLAB workspace variable."""
 
+    var_id: int
     name: str
     value: float = 0.0
-
-
-@dataclass
-class AcquisitionFrame:
-    """One sample returned from an acquisition group."""
-
-    signal_values: tuple[float, ...]
-    missed_data: float = 0.0
-    sim_time: float = 0.0
-    sample_rate: float = 0.0
-    time_step: float = 0.0
-    end_frame: bool = False
 
 
 # ---------------------------------------------------------------------------

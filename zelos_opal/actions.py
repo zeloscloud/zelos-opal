@@ -90,8 +90,8 @@ def list_signals() -> dict[str, Any]:
     }
 
 
-@action("Read Signal", "Read current value of a control signal")
-@action.select("name", choices=_control_signal_choices, title="Signal")
+@action("Read Signal", "Read current value of a signal")
+@action.select("name", choices=_signal_choices, title="Signal")
 def read_signal(name: str) -> dict[str, Any]:
     return _monitor.read_signals((name,))
 
@@ -136,6 +136,38 @@ def set_parameter(name: str, value: float) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Variables (MATLAB workspace — best-effort, not all models define these)
+# ---------------------------------------------------------------------------
+
+
+def _variable_choices() -> list[str]:
+    return [v.name for v in _monitor.variable_infos] if _monitor else []
+
+
+@action("List Variables", "List MATLAB workspace variables (if available)")
+def list_variables() -> dict[str, Any]:
+    infos = _monitor.variable_infos
+    return {
+        "count": len(infos),
+        "variables": [{"name": v.name, "value": v.value} for v in infos],
+    }
+
+
+@action("Read Variable", "Read current value of a MATLAB variable")
+@action.select("name", choices=_variable_choices, title="Variable")
+def read_variable(name: str) -> dict[str, Any]:
+    return _monitor.read_variable(name)
+
+
+@action("Set Variable", "Set a MATLAB workspace variable value")
+@action.select("name", choices=_variable_choices, title="Variable")
+@action.number("value", title="Value")
+def set_variable(name: str, value: float) -> dict[str, Any]:
+    _monitor.set_variable(name, value)
+    return {"message": f"Set {name} = {value}"}
+
+
+# ---------------------------------------------------------------------------
 # Action registry
 # ---------------------------------------------------------------------------
 
@@ -148,4 +180,7 @@ _actions = [
     list_parameters,
     read_parameter,
     set_parameter,
+    list_variables,
+    read_variable,
+    set_variable,
 ]

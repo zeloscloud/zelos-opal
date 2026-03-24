@@ -1,10 +1,10 @@
 """Tests for the OPAL-RT extension."""
 
 from zelos_opal.constants import (
-    AcquisitionFrame,
     ModelState,
     ParameterInfo,
     SignalInfo,
+    VariableInfo,
     sanitize_name,
 )
 from zelos_opal.extension import _common_prefix, _split_signal_path
@@ -44,12 +44,6 @@ class MockBridge:
     def get_model_state(self) -> ModelState:
         return ModelState.RUNNING if self.connected else ModelState.DISCONNECTED
 
-    def setup_dynamic_acquisition(self, group: int, signal_list: tuple, count: int) -> None:
-        pass
-
-    def teardown_dynamic_acquisition(self, group: int) -> None:
-        pass
-
     def get_signals_description(self) -> list[SignalInfo]:
         return list(self.SIGNALS)
 
@@ -69,6 +63,12 @@ class MockBridge:
     def get_control_signals_description(self) -> list[SignalInfo]:
         return list(self.CONTROL_SIGNALS)
 
+    def get_variables_description(self) -> list[VariableInfo]:
+        return []
+
+    def set_variable(self, var_id: int, value: float) -> None:
+        pass
+
     def get_parameters_description(self) -> list[ParameterInfo]:
         return list(self.PARAMS)
 
@@ -84,15 +84,6 @@ class MockBridge:
 
     def release_parameter_control(self) -> None:
         self.param_control_held = False
-
-    def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
-        return AcquisitionFrame(
-            signal_values=(120.0, 50.0),
-            sim_time=1.0,
-            sample_rate=1000.0,
-            time_step=acq_time_step,
-            end_frame=True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +260,13 @@ def test_action_list_signals(check) -> None:
 def test_action_read_signal(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
+    monitor.start()
     _setup_actions(monitor)
     from zelos_opal.actions import read_signal
 
-    result = read_signal("mock/ctrl")
-    check.that(result["mock/ctrl"], "==", 0.0)
+    result = read_signal("mock/v")
+    check.that(result["mock/v"], "==", 120.0)
+    monitor.stop()
 
 
 def test_action_set_signal(check) -> None:
@@ -358,14 +351,10 @@ class HierarchicalMockBridge(MockBridge):
         SignalInfo(name="signal1", path=_HIER_PATHS[2]),
     ]
 
-    def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
-        return AcquisitionFrame(
-            signal_values=(1.0, 2.0, 3.0),
-            sim_time=1.0,
-            sample_rate=1000.0,
-            time_step=acq_time_step,
-            end_frame=True,
-        )
+    _HIER_VALUES = {p: float(i + 1) for i, p in enumerate(_HIER_PATHS)}
+
+    def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
+        return tuple(self._HIER_VALUES.get(n, 0.0) for n in names)
 
 
 def test_common_prefix(check) -> None:
@@ -405,14 +394,14 @@ def test_discover_builds_hierarchical_events(check) -> None:
     monitor = _make_monitor(bridge)
     monitor.start()
 
-    mapping = monitor._acq_mapping
+    mapping = monitor._trace_signals
     check.that(len(mapping), "==", 3)
 
-    events = {evt for evt, _ in mapping}
+    events = {evt for _, evt, _ in mapping}
     check.that("CAN_Control/CH00/Data_1_TRIM" in events, "is true")
     check.that("CAN_Main/CH00_Main/Data_2" in events, "is true")
 
-    fields_trim = [fld for evt, fld in mapping if evt == "CAN_Control/CH00/Data_1_TRIM"]
+    fields_trim = [fld for _, evt, fld in mapping if evt == "CAN_Control/CH00/Data_1_TRIM"]
     check.that("Data_1_RAW" in fields_trim, "is true")
     check.that("Data_1_SWITCH" in fields_trim, "is true")
     monitor.stop()
@@ -433,7 +422,7 @@ def test_discover_deduplicates_fields(check) -> None:
 
     monitor = _make_monitor(DupBridge())
     monitor.start()
-    fields = [fld for _, fld in monitor._acq_mapping]
+    fields = [fld for _, _, fld in monitor._trace_signals]
     check.that(fields, "==", ["Out", "Out_1"])
     monitor.stop()
 
@@ -466,4 +455,60 @@ def test_actions_expose_full_paths_not_event_names(check) -> None:
     choices = _signal_choices()
     for path in _HIER_PATHS:
         check.that(path in choices, "is true", f"missing: {path}")
+    monitor.stop()
+
+
+# ---------------------------------------------------------------------------
+# Poll-cycle integration (new GetSignalsByName tracing path)
+# ---------------------------------------------------------------------------
+
+
+def test_poll_cycle_traces_signals(check) -> None:
+    """Simulate one iteration of the run() poll loop end-to-end."""
+    bridge = HierarchicalMockBridge()
+    monitor = _make_monitor(bridge)
+    monitor.start()
+
+    names = tuple(path for path, _, _ in monitor._trace_signals)
+    check.that(len(names), "==", 3)
+
+    values = bridge.get_signals_by_name(names)
+    by_event: dict[str, dict[str, float]] = {}
+    for (_, evt, fld), val in zip(monitor._trace_signals, values, strict=False):
+        by_event.setdefault(evt, {})[fld] = val
+    for evt, data in by_event.items():
+        monitor.source.log(evt, data)
+
+    check.that(len(by_event), "==", 2)
+    trim_data = by_event.get("CAN_Control/CH00/Data_1_TRIM", {})
+    check.that("Data_1_RAW" in trim_data, "is true")
+    check.that("Data_1_SWITCH" in trim_data, "is true")
+    check.that(trim_data["Data_1_RAW"], "==", 1.0)
+    check.that(trim_data["Data_1_SWITCH"], "==", 2.0)
+    monitor.stop()
+
+
+# ---------------------------------------------------------------------------
+# Parameter name format (matches RT-LAB path/name convention)
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_name_format_matches_rtlab(check) -> None:
+    """Action choices must build 'path/name' strings matching RT-LAB convention."""
+    bridge = MockBridge()
+    monitor = _make_monitor(bridge)
+    monitor.start()
+    _setup_actions(monitor)
+    from zelos_opal.actions import _parameter_choices
+
+    choices = _parameter_choices()
+    check.that(len(choices), "==", 1)
+    check.that(choices[0], "==", "mock/blk/Gain")
+
+    result = monitor.read_parameters(("mock/blk/Gain",))
+    check.that(result["mock/blk/Gain"], "==", 1.0)
+
+    monitor.set_parameters(("mock/blk/Gain",), (3.14,))
+    check.that(bridge._param_values["mock/blk/Gain"], "==", 3.14)
+    check.that(bridge.param_control_held, "is false")
     monitor.stop()
