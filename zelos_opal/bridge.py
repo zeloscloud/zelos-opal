@@ -13,7 +13,6 @@ from typing import Any
 
 from zelos_opal.constants import (
     AcquisitionFrame,
-    ControlOp,
     ModelState,
     ParameterInfo,
     SignalInfo,
@@ -126,13 +125,22 @@ class LiveBridge:
             for sig in raw
         ]
 
-    def get_signal_names_for_group(self, group: int) -> list[str]:
-        """Return signal names for a specific acquisition group (1-based)."""
+    def setup_dynamic_acquisition(self, group: int, signal_list: tuple, count: int) -> None:
+        """Take control and configure *count* dynamic signals for *group* (0-based).
+
+        *signal_list* is a flat tuple of ``(id, element, id, element, …)``
+        matching the format expected by ``SetDynSignalListForGroup``.
+        """
         try:
-            names = self._api.LoadDynSignalListForGroup(group - 1)
-            return list(names) if names else []
+            self._api.GetAcquisitionControl(1, group)
         except Exception:
-            return []
+            logger.debug("GetAcquisitionControl: may already hold control", exc_info=True)
+        self._api.SetMaxDynSignalForGroup(group, count)
+        self._api.SetDynSignalListForGroup(group, signal_list)
+
+    def teardown_dynamic_acquisition(self, group: int) -> None:
+        """Release acquisition control for *group* (0-based)."""
+        self._api.GetAcquisitionControl(0, group)
 
     def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._api.GetSignalsByName(names))
@@ -141,10 +149,10 @@ class LiveBridge:
         self._api.SetSignalsByName(names, values)
 
     def acquire_signal_control(self, subsystem_id: int) -> None:
-        self._api.GetSignalControl(subsystem_id, ControlOp.ACQUIRE.value)
+        self._api.GetSignalControl(subsystem_id, 1)
 
     def release_signal_control(self, subsystem_id: int) -> None:
-        self._api.GetSignalControl(subsystem_id, ControlOp.RELEASE.value)
+        self._api.GetSignalControl(subsystem_id, 0)
 
     # ------------------------------------------------------------------
     # Control signals
@@ -188,10 +196,10 @@ class LiveBridge:
         self._api.SetParametersByName(names, values)
 
     def acquire_parameter_control(self) -> None:
-        self._api.GetParameterControl(ControlOp.ACQUIRE.value)
+        self._api.GetParameterControl(1)
 
     def release_parameter_control(self) -> None:
-        self._api.GetParameterControl(ControlOp.RELEASE.value)
+        self._api.GetParameterControl(0)
 
     # ------------------------------------------------------------------
     # Variables
@@ -202,7 +210,7 @@ class LiveBridge:
             raw = self._api.GetVariablesDescription()
             return [VariableInfo(name=v[0], value=float(v[1])) for v in raw]
         except Exception:
-            logger.debug("GetVariablesDescription not available or returned error")
+            logger.warning("GetVariablesDescription failed", exc_info=True)
             return []
 
     def get_variables_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
@@ -221,8 +229,9 @@ class LiveBridge:
     # ------------------------------------------------------------------
 
     def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
+        """Acquire one frame from *acq_group* (0-based)."""
         sim_signals, mon_signals, sim_time_step, end_frame = self._api.GetAcqGroupSyncSignals(
-            acq_group - 1, 0, 0, 1, acq_time_step
+            acq_group, 0, 0, 1, acq_time_step
         )
         missed_data, _offset, sim_time, sample_sec = mon_signals
         return AcquisitionFrame(

@@ -40,11 +40,7 @@ def _control_signal_choices() -> list[str]:
 
 
 def _parameter_choices() -> list[str]:
-    return [p.path for p in _monitor.param_infos] if _monitor else []
-
-
-def _variable_choices() -> list[str]:
-    return [v.name for v in _monitor.variable_infos] if _monitor else []
+    return [f"{p.path}/{p.name}" for p in _monitor.param_infos] if _monitor else []
 
 
 # ---------------------------------------------------------------------------
@@ -94,50 +90,18 @@ def list_signals() -> dict[str, Any]:
     }
 
 
-@action("Read Signal", "Read current value of a signal")
-@action.select("name", choices=_signal_choices, title="Signal")
+@action("Read Signal", "Read current value of a control signal")
+@action.select("name", choices=_control_signal_choices, title="Signal")
 def read_signal(name: str) -> dict[str, Any]:
     return _monitor.read_signals((name,))
 
 
-@action("Set Signal", "Set a signal value")
-@action.select("name", choices=_signal_choices, title="Signal")
+@action("Set Signal", "Set a control signal value (dynamic signals are read-only)")
+@action.select("name", choices=_control_signal_choices, title="Signal")
 @action.number("value", title="Value")
 def set_signal(name: str, value: float) -> dict[str, Any]:
     _monitor.set_signals((name,), (value,))
     return {"message": f"Set {name} = {value}"}
-
-
-# ---------------------------------------------------------------------------
-# Control signals
-# ---------------------------------------------------------------------------
-
-
-@action("List Control Signals", "List control signals in the model")
-def list_control_signals() -> dict[str, Any]:
-    infos = _monitor.control_signal_infos
-    return {
-        "count": len(infos),
-        "control_signals": [{"name": s.name, "path": s.path, "label": s.label} for s in infos],
-    }
-
-
-@action("Read Control Signals", "Read all current control signal values")
-def read_control_signals() -> dict[str, Any]:
-    return _monitor.read_control_signals()
-
-
-@action("Set Control Signals", "Set control signal values for a subsystem")
-@action.integer("subsystem_id", minimum=0, maximum=16, default=1, title="Subsystem ID")
-@action.text(
-    "values",
-    title="Values",
-    description="Comma-separated numeric values",
-)
-def set_control_signals(subsystem_id: int, values: str) -> dict[str, Any]:
-    vals = tuple(float(v.strip()) for v in values.split(",") if v.strip())
-    _monitor.set_control_signals(int(subsystem_id), vals)
-    return {"message": f"Set {len(vals)} control signal(s)"}
 
 
 # ---------------------------------------------------------------------------
@@ -172,34 +136,6 @@ def set_parameter(name: str, value: float) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Variables
-# ---------------------------------------------------------------------------
-
-
-@action("List Variables", "List workspace variables in the model")
-def list_variables() -> dict[str, Any]:
-    infos = _monitor.variable_infos
-    return {
-        "count": len(infos),
-        "variables": [{"name": v.name, "value": v.value} for v in infos],
-    }
-
-
-@action("Read Variable", "Read current value of a variable")
-@action.select("name", choices=_variable_choices, title="Variable")
-def read_variable(name: str) -> dict[str, Any]:
-    return _monitor.read_variables((name,))
-
-
-@action("Set Variable", "Set a workspace variable value")
-@action.select("name", choices=_variable_choices, title="Variable")
-@action.number("value", title="Value")
-def set_variable(name: str, value: float) -> dict[str, Any]:
-    _monitor.set_variables((name,), (value,))
-    return {"message": f"Set {name} = {value}"}
-
-
-# ---------------------------------------------------------------------------
 # Action registry
 # ---------------------------------------------------------------------------
 
@@ -209,13 +145,7 @@ _actions = [
     list_signals,
     read_signal,
     set_signal,
-    list_control_signals,
-    read_control_signals,
-    set_control_signals,
     list_parameters,
     read_parameter,
     set_parameter,
-    list_variables,
-    read_variable,
-    set_variable,
 ]

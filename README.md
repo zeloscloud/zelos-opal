@@ -1,40 +1,51 @@
-# Zelos OPAL-RT Extension
+# Zelos extension for OPAL-RT
 
-Zelos extension for OPAL-RT real-time simulation systems.
+## Features
 
-Currently provides basic scaffolding with synthetic power-system signal
-generation. Custom OPAL-RT packages will be integrated in a future iteration.
+- 📡 **Real-time signal streaming** - Stream all model signals to Zelos with hierarchical event structure matching RT-LAB
+- 🎛️ **Read & write signals** - Read and set signal values, parameters, and variables from the Zelos App
+- 📊 **Model introspection** - Browse signals, parameters, control signals, and workspace variables
+- 🔌 **Auto-discovery** - Automatically detects RT-LAB installation and discovers model contents on connect
 
 ## Quick Start
 
-```bash
-just install       # Install dependencies
-just dev           # Run locally (generates synthetic signals)
-just test          # Run tests
-just check         # Lint
-just format        # Auto-format
-just package       # Build .tar.gz for install
-```
+1. **Install** the extension from the Zelos App
+2. **Configure** the path to your RT-LAB project file (`.llp`)
+3. **Start** the extension to begin streaming data
+4. **View** real-time signals in your Zelos App
 
 ## Configuration
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `demo` | boolean | `false` | Run with built-in data generation |
-| `endpoint` | string | `localhost:5100` | OPAL-RT target endpoint |
-| `poll_interval` | number | `1.0` | Data acquisition interval (seconds) |
-| `log_level` | string | `INFO` | Logging level |
+All configuration is managed through the Zelos App settings interface.
 
-## Signals
+### Required Settings
 
-The `analog_outputs` event provides:
+- **Project File**: Path to your RT-LAB project (`.llp`) file
 
-- `va_rms`, `vb_rms`, `vc_rms` — 3-phase voltage RMS (V)
-- `ia_rms`, `ib_rms`, `ic_rms` — 3-phase current RMS (A)
-- `frequency` — Grid frequency (Hz)
-- `active_power` — Active power (W)
-- `reactive_power` — Reactive power (VAR)
-- `status` — 0=OK, 1=WARNING, 2=FAULT
+### Optional Settings
+
+- **Acquisition Time Step (ms)**: Sampling time step for data acquisition (default: 1)
+- **Poll Interval (seconds)**: Delay between acquisition frames (default: 1.0)
+- **RT-LAB Install Path**: Path to your RT-LAB version directory — leave blank for auto-discovery
+- **Log Level**: Logging verbosity (default: INFO)
+
+## Actions
+
+The extension provides several actions accessible from the Zelos App:
+
+- **Get Status** - View model state, signal counts, and connection info
+- **List Signals / Parameters / Variables / Control Signals** - Browse all model contents
+- **Read Signal / Parameter / Variable** - Read current values
+- **Set Signal / Parameter / Variable** - Write new values
+- **Read / Set Control Signals** - Interact with control signals by subsystem
+- **Set Poll Interval** - Adjust acquisition speed at runtime
+
+## Support
+
+For help and support:
+
+- 📖 [Zelos Documentation](https://docs.zeloscloud.io)
+- 📧 help@zeloscloud.io
 
 ## License
 

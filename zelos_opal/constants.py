@@ -19,16 +19,16 @@ from typing import Any
 class ModelState(enum.IntEnum):
     """OP_MODEL_STATE — RT-LAB model lifecycle states."""
 
+    NOT_CONNECTED = 0
     NOT_LOADABLE = 1
     COMPILING = 2
     LOADABLE = 3
     LOADING = 4
-    LOADED = 5
-    PAUSED = 6
-    RUNNING = 7
-    RESETTING = 8
+    RESETTING = 5
+    LOADED = 6
+    PAUSED = 7
+    RUNNING = 8
     DISCONNECTED = 9
-    NOT_CONNECTED = 10
 
 
 class SignalType(enum.IntEnum):
@@ -45,13 +45,6 @@ class SignalType(enum.IntEnum):
             return cls(int(value))
         except (ValueError, TypeError):
             return cls.DYNAMIC
-
-
-class ControlOp(enum.IntEnum):
-    """Argument to GetSignalControl / GetParameterControl."""
-
-    RELEASE = 0
-    ACQUIRE = 1
 
 
 # ---------------------------------------------------------------------------

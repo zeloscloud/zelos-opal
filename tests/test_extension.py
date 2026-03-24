@@ -5,7 +5,6 @@ from zelos_opal.constants import (
     ModelState,
     ParameterInfo,
     SignalInfo,
-    VariableInfo,
     sanitize_name,
 )
 from zelos_opal.extension import _common_prefix, _split_signal_path
@@ -26,20 +25,15 @@ class MockBridge:
         SignalInfo(name="switch_pos", path="mock/ctrl", label="Switch"),
     ]
     PARAMS = [
-        ParameterInfo(name="gain", path="mock/ctrl", variable="Gain", value=1.0),
-    ]
-    VARIABLES = [
-        VariableInfo(name="K", value=10.0),
+        ParameterInfo(name="Gain", path="mock/blk", variable="Gain", value=1.0),
     ]
 
     def __init__(self) -> None:
         self.connected = False
         self.signal_control_held = False
         self.param_control_held = False
-        self._signal_values: dict[str, float] = {"mock/v": 120.0, "mock/i": 50.0}
-        self._param_values: dict[str, float] = {"mock/ctrl": 1.0}
-        self._variable_values: dict[str, float] = {"K": 10.0}
-        self._control_signal_values: tuple[float, ...] = (0.0,)
+        self._signal_values: dict[str, float] = {"mock/v": 120.0, "mock/i": 50.0, "mock/ctrl": 0.0}
+        self._param_values: dict[str, float] = {"mock/blk/Gain": 1.0}
 
     def connect(self, project_path: str) -> None:
         self.connected = True
@@ -50,8 +44,11 @@ class MockBridge:
     def get_model_state(self) -> ModelState:
         return ModelState.RUNNING if self.connected else ModelState.DISCONNECTED
 
-    def get_signal_names_for_group(self, group: int) -> list[str]:
-        return [s.name for s in self.SIGNALS] if group == 1 else []
+    def setup_dynamic_acquisition(self, group: int, signal_list: tuple, count: int) -> None:
+        pass
+
+    def teardown_dynamic_acquisition(self, group: int) -> None:
+        pass
 
     def get_signals_description(self) -> list[SignalInfo]:
         return list(self.SIGNALS)
@@ -72,12 +69,6 @@ class MockBridge:
     def get_control_signals_description(self) -> list[SignalInfo]:
         return list(self.CONTROL_SIGNALS)
 
-    def get_control_signals(self) -> tuple[float, ...]:
-        return self._control_signal_values
-
-    def set_control_signals(self, subsystem_id: int, values: tuple[float, ...]) -> None:
-        self._control_signal_values = values
-
     def get_parameters_description(self) -> list[ParameterInfo]:
         return list(self.PARAMS)
 
@@ -93,16 +84,6 @@ class MockBridge:
 
     def release_parameter_control(self) -> None:
         self.param_control_held = False
-
-    def get_variables_description(self) -> list[VariableInfo]:
-        return list(self.VARIABLES)
-
-    def get_variables_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
-        return tuple(self._variable_values.get(n, 0.0) for n in names)
-
-    def set_variables(self, names: tuple[str, ...], values: tuple[float, ...]) -> None:
-        for n, v in zip(names, values, strict=True):
-            self._variable_values[n] = v
 
     def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
         return AcquisitionFrame(
@@ -189,7 +170,6 @@ def test_discover_finds_all_types(check) -> None:
     check.that(len(monitor.signal_infos), "==", 2)
     check.that(len(monitor.control_signal_infos), "==", 1)
     check.that(len(monitor.param_infos), "==", 1)
-    check.that(len(monitor.variable_infos), "==", 1)
     monitor.stop()
 
 
@@ -216,7 +196,6 @@ def test_status_when_running(check) -> None:
     check.that(status["signal_count"], "==", 2)
     check.that(status["control_signal_count"], "==", 1)
     check.that(status["parameter_count"], "==", 1)
-    check.that(status["variable_count"], "==", 1)
     monitor.stop()
 
 
@@ -235,50 +214,18 @@ def test_set_signals(check) -> None:
     check.that(bridge.signal_control_held, "is false")
 
 
-def test_read_control_signals(check) -> None:
-    bridge = MockBridge()
-    monitor = _make_monitor(bridge)
-    monitor.start()
-    result = monitor.read_control_signals()
-    check.that(result["mock/ctrl"], "==", 0.0)
-    monitor.stop()
-
-
-def test_set_control_signals(check) -> None:
-    bridge = MockBridge()
-    monitor = _make_monitor(bridge)
-    monitor.start()
-    monitor.set_control_signals(1, (5.0,))
-    check.that(bridge._control_signal_values, "==", (5.0,))
-    check.that(bridge.signal_control_held, "is false")
-    monitor.stop()
-
-
 def test_read_parameters(check) -> None:
     monitor = _make_monitor()
-    result = monitor.read_parameters(("mock/ctrl",))
-    check.that(result["mock/ctrl"], "==", 1.0)
+    result = monitor.read_parameters(("mock/blk/Gain",))
+    check.that(result["mock/blk/Gain"], "==", 1.0)
 
 
 def test_set_parameters(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
-    monitor.set_parameters(("mock/ctrl",), (2.5,))
-    check.that(bridge._param_values["mock/ctrl"], "==", 2.5)
+    monitor.set_parameters(("mock/blk/Gain",), (2.5,))
+    check.that(bridge._param_values["mock/blk/Gain"], "==", 2.5)
     check.that(bridge.param_control_held, "is false")
-
-
-def test_read_variables(check) -> None:
-    monitor = _make_monitor()
-    result = monitor.read_variables(("K",))
-    check.that(result["K"], "==", 10.0)
-
-
-def test_set_variables(check) -> None:
-    bridge = MockBridge()
-    monitor = _make_monitor(bridge)
-    monitor.set_variables(("K",), (20.0,))
-    check.that(bridge._variable_values["K"], "==", 20.0)
 
 
 # ---------------------------------------------------------------------------
@@ -320,12 +267,13 @@ def test_action_list_signals(check) -> None:
 
 
 def test_action_read_signal(check) -> None:
-    monitor = _make_monitor()
+    bridge = MockBridge()
+    monitor = _make_monitor(bridge)
     _setup_actions(monitor)
     from zelos_opal.actions import read_signal
 
-    result = read_signal("mock/v")
-    check.that(result["mock/v"], "==", 120.0)
+    result = read_signal("mock/ctrl")
+    check.that(result["mock/ctrl"], "==", 0.0)
 
 
 def test_action_set_signal(check) -> None:
@@ -334,8 +282,8 @@ def test_action_set_signal(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import set_signal
 
-    set_signal("mock/v", 240.0)
-    check.that(bridge._signal_values["mock/v"], "==", 240.0)
+    set_signal("mock/ctrl", 5.0)
+    check.that(bridge._signal_values["mock/ctrl"], "==", 5.0)
 
 
 def test_action_read_parameter(check) -> None:
@@ -343,8 +291,8 @@ def test_action_read_parameter(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import read_parameter
 
-    result = read_parameter("mock/ctrl")
-    check.that(result["mock/ctrl"], "==", 1.0)
+    result = read_parameter("mock/blk/Gain")
+    check.that(result["mock/blk/Gain"], "==", 1.0)
 
 
 def test_action_set_parameter(check) -> None:
@@ -353,8 +301,8 @@ def test_action_set_parameter(check) -> None:
     _setup_actions(monitor)
     from zelos_opal.actions import set_parameter
 
-    set_parameter("mock/ctrl", 2.5)
-    check.that(bridge._param_values["mock/ctrl"], "==", 2.5)
+    set_parameter("mock/blk/Gain", 2.5)
+    check.that(bridge._param_values["mock/blk/Gain"], "==", 2.5)
 
 
 def test_action_dynamic_choices(check) -> None:
@@ -366,13 +314,11 @@ def test_action_dynamic_choices(check) -> None:
         _control_signal_choices,
         _parameter_choices,
         _signal_choices,
-        _variable_choices,
     )
 
     check.that(_signal_choices(), "==", ["mock/v", "mock/i"])
     check.that(_control_signal_choices(), "==", ["mock/ctrl"])
-    check.that(_parameter_choices(), "==", ["mock/ctrl"])
-    check.that(_variable_choices(), "==", ["K"])
+    check.that(_parameter_choices(), "==", ["mock/blk/Gain"])
     monitor.stop()
 
 
@@ -412,9 +358,6 @@ class HierarchicalMockBridge(MockBridge):
         SignalInfo(name="signal1", path=_HIER_PATHS[2]),
     ]
 
-    def get_signal_names_for_group(self, group: int) -> list[str]:
-        return list(_HIER_PATHS) if group == 1 else []
-
     def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
         return AcquisitionFrame(
             signal_values=(1.0, 2.0, 3.0),
@@ -437,9 +380,7 @@ def test_common_prefix(check) -> None:
 
 def test_split_signal_path_hierarchy(check) -> None:
     prefix = "Model/Sub/"
-    evt, fld = _split_signal_path(
-        "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1", prefix
-    )
+    evt, fld = _split_signal_path("Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1", prefix)
     check.that(evt, "==", "CAN_Control/CH00/Data_1_TRIM")
     check.that(fld, "==", "Data_1_RAW")
 
@@ -464,14 +405,14 @@ def test_discover_builds_hierarchical_events(check) -> None:
     monitor = _make_monitor(bridge)
     monitor.start()
 
-    mapping = monitor._group_mapping
-    check.that(1 in mapping, "is true")
+    mapping = monitor._acq_mapping
+    check.that(len(mapping), "==", 3)
 
-    events = {evt for evt, _ in mapping[1]}
+    events = {evt for evt, _ in mapping}
     check.that("CAN_Control/CH00/Data_1_TRIM" in events, "is true")
     check.that("CAN_Main/CH00_Main/Data_2" in events, "is true")
 
-    fields_trim = [fld for evt, fld in mapping[1] if evt == "CAN_Control/CH00/Data_1_TRIM"]
+    fields_trim = [fld for evt, fld in mapping if evt == "CAN_Control/CH00/Data_1_TRIM"]
     check.that("Data_1_RAW" in fields_trim, "is true")
     check.that("Data_1_SWITCH" in fields_trim, "is true")
     monitor.stop()
@@ -490,15 +431,9 @@ def test_discover_deduplicates_fields(check) -> None:
             SignalInfo(name="s", path=dup_paths[1]),
         ]
 
-        def get_signal_names_for_group(self, group: int) -> list[str]:
-            return list(dup_paths) if group == 1 else []
-
-        def acquire(self, acq_group: int, acq_time_step: float) -> AcquisitionFrame:
-            return AcquisitionFrame(signal_values=(1.0, 2.0), end_frame=True)
-
     monitor = _make_monitor(DupBridge())
     monitor.start()
-    fields = [fld for _, fld in monitor._group_mapping[1]]
+    fields = [fld for _, fld in monitor._acq_mapping]
     check.that(fields, "==", ["Out", "Out_1"])
     monitor.stop()
 
