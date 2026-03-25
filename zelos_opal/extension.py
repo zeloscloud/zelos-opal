@@ -13,9 +13,7 @@ from any thread — actions use them without knowing about the plumbing.
 from __future__ import annotations
 
 import logging
-import os.path
 import queue
-import re
 import threading
 import time
 from typing import Any
@@ -34,29 +32,14 @@ from zelos_opal.constants import (
 
 logger = logging.getLogger(__name__)
 
-_PORT_RE = re.compile(r"^port\d+$", re.IGNORECASE)
 
+def _split_signal_path(path: str) -> tuple[str, str]:
+    """Split a hierarchical path into ``(event_name, field_name)``.
 
-def _common_prefix(paths: list[str]) -> str:
-    """Longest common directory prefix across *paths*."""
-    if not paths:
-        return ""
-    prefix = os.path.commonprefix(paths)
-    slash = prefix.rfind("/")
-    return prefix[: slash + 1] if slash >= 0 else ""
-
-
-def _split_signal_path(path: str, prefix: str) -> tuple[str, str]:
-    """Split a signal path into ``(event_name, field_name)``.
-
-    * Strips the shared model prefix and any trailing ``portN``.
-    * All-but-last remaining segments → event (``/``-joined, matching OPAL-RT hierarchy).
-    * Last segment → field.
+    All-but-last segments → event (``/``-joined), last segment → field.
+    Works for both signal and parameter paths.
     """
-    remainder = path[len(prefix) :] if path.startswith(prefix) else path
-    parts = [p for p in remainder.split("/") if p]
-    if parts and _PORT_RE.match(parts[-1]):
-        parts = parts[:-1]
+    parts = [p for p in path.split("/") if p]
     if not parts:
         return ("signals", sanitize_name(path))
     if len(parts) == 1:
@@ -80,6 +63,7 @@ class OpalMonitor:
         self.variable_infos: list[VariableInfo] = []
 
         self._trace_signals: list[tuple[str, str, str]] = []  # (path, event, field)
+        self._trace_params: list[tuple[str, str, str]] = []  # (path, event, field)
         self._cmd_queue: queue.Queue[tuple[Any, tuple, dict, threading.Event, dict]] = queue.Queue()
 
         self.source = zelos_sdk.TraceSourceCacheLast("opal")
@@ -208,9 +192,10 @@ class OpalMonitor:
             logger.exception("Error disconnecting from RT-LAB")
 
     def run(self) -> None:
-        """Poll loop — reads RT-LAB signals by name and streams to Zelos traces."""
+        """Poll loop — reads RT-LAB signals and parameters, streams to Zelos."""
         prev_state: ModelState | None = None
-        names = tuple(path for path, _, _ in self._trace_signals)
+        sig_names = tuple(path for path, _, _ in self._trace_signals)
+        param_names = tuple(path for path, _, _ in self._trace_params)
 
         while self.running:
             poll = self.config.get("poll_interval", 1.0)
@@ -221,31 +206,39 @@ class OpalMonitor:
                 signal_count=len(self.signal_infos),
                 parameter_count=len(self.param_infos),
             )
-            if self.model_state != ModelState.RUNNING:
-                if prev_state != self.model_state:
-                    logger.info("Model state is %s — waiting for RUNNING", self.model_state.name)
-                self._sleep_with_drain(poll)
+
+            if self.model_state != prev_state:
+                logger.info("Model state: %s", self.model_state.name)
                 prev_state = self.model_state
-                continue
-
-            if prev_state != ModelState.RUNNING:
-                logger.info("Model entered RUNNING — polling signals")
-                prev_state = self.model_state
-
-            if not names:
-                self._sleep_with_drain(poll)
-                continue
-
-            try:
-                values = self._bridge.get_signals_by_name(names)
-            except Exception:
-                logger.exception("Signal read error")
-                self._sleep_with_drain(poll)
-                continue
 
             by_event: dict[str, dict[str, float]] = {}
-            for (_, evt, fld), val in zip(self._trace_signals, values, strict=False):
-                by_event.setdefault(evt, {})[fld] = val
+
+            # Parameters are readable in most states (NOT_LOADABLE and up)
+            if param_names:
+                try:
+                    pvalues = self._bridge.get_parameters_by_name(param_names)
+                    for (_, evt, fld), val in zip(
+                        self._trace_params,
+                        pvalues,
+                        strict=False,
+                    ):
+                        by_event.setdefault(evt, {})[fld] = val
+                except Exception:
+                    logger.exception("Parameter read error")
+
+            # Signals require RUNNING state
+            if self.model_state == ModelState.RUNNING and sig_names:
+                try:
+                    values = self._bridge.get_signals_by_name(sig_names)
+                    for (_, evt, fld), val in zip(
+                        self._trace_signals,
+                        values,
+                        strict=False,
+                    ):
+                        by_event.setdefault(evt, {})[fld] = val
+                except Exception:
+                    logger.exception("Signal read error")
+
             for evt, data in by_event.items():
                 self.source.log(evt, data)
 
@@ -258,9 +251,11 @@ class OpalMonitor:
     def _discover(self) -> None:
         """Query the bridge for all model contents and build the trace schema.
 
-        All output signals (DYNAMIC + ACQUISITION) are included for tracing via
-        ``GetSignalsByName`` polling.  CONTROL signals are omitted from tracing
-        (they are model inputs) but remain available through actions.
+        Output signals (DYNAMIC + ACQUISITION) and parameters are traced.
+        CONTROL signals are omitted (model inputs) but available via actions.
+
+        Signal and parameter paths naturally occupy different hierarchy
+        levels, so they coexist in the same event tree without collision.
         """
         self.signal_infos = self._bridge.get_signals_description()
         self.control_signal_infos = self._bridge.get_control_signals_description()
@@ -270,14 +265,12 @@ class OpalMonitor:
         traced_types = (SignalType.DYNAMIC, SignalType.ACQUISITION)
         output_signals = [s for s in self.signal_infos if s.signal_type in traced_types]
 
-        all_paths = [s.path for s in output_signals]
-        prefix = _common_prefix(all_paths)
-
         event_fields: dict[str, dict[str, None]] = {}
         self._trace_signals = []
+        self._trace_params = []
 
         for s in output_signals:
-            evt, fld = _split_signal_path(s.path, prefix)
+            evt, fld = _split_signal_path(s.path)
             base = fld
             idx = 1
             while fld in event_fields.get(evt, {}):
@@ -286,6 +279,17 @@ class OpalMonitor:
             event_fields.setdefault(evt, {})[fld] = None
             self._trace_signals.append((s.path, evt, fld))
 
+        for p in self.param_infos:
+            api_path = f"{p.path}/{p.name}"
+            evt, fld = _split_signal_path(api_path)
+            base = fld
+            idx = 1
+            while fld in event_fields.get(evt, {}):
+                fld = f"{base}_{idx}"
+                idx += 1
+            event_fields.setdefault(evt, {})[fld] = None
+            self._trace_params.append((api_path, evt, fld))
+
         for evt, fields in event_fields.items():
             meta = [
                 zelos_sdk.TraceEventFieldMetadata(f, zelos_sdk.DataType.Float64) for f in fields
@@ -293,10 +297,12 @@ class OpalMonitor:
             self.source.add_event(evt, meta)
 
         logger.info(
-            "Discovered %d signals (%d traced), %d control signals, %d parameters, %d trace events",
+            "Discovered %d signals (%d traced), %d parameters (%d traced),"
+            " %d control, %d trace events",
             len(self.signal_infos),
-            len(output_signals),
-            len(self.control_signal_infos),
+            len(self._trace_signals),
             len(self.param_infos),
+            len(self._trace_params),
+            len(self.control_signal_infos),
             len(event_fields),
         )

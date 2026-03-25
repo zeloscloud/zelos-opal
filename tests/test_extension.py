@@ -7,7 +7,7 @@ from zelos_opal.constants import (
     VariableInfo,
     sanitize_name,
 )
-from zelos_opal.extension import _common_prefix, _split_signal_path
+from zelos_opal.extension import _split_signal_path
 
 # ---------------------------------------------------------------------------
 # MockBridge — deterministic stand-in for LiveBridge
@@ -341,50 +341,56 @@ _HIER_PATHS = [
     "Model/Sub/CAN_Main/CH00_Main/Data_2/Out1/port1",
 ]
 
+_HIER_PARAM_PATHS = [
+    "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_GAIN",
+    "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_BIAS",
+]
+
 
 class HierarchicalMockBridge(MockBridge):
-    """MockBridge with realistic hierarchical OPAL-RT signal paths."""
+    """MockBridge with realistic hierarchical OPAL-RT signal and param paths."""
 
     SIGNALS = [
         SignalInfo(name="signal1", path=_HIER_PATHS[0]),
         SignalInfo(name="signal1", path=_HIER_PATHS[1]),
         SignalInfo(name="signal1", path=_HIER_PATHS[2]),
     ]
+    PARAMS = [
+        ParameterInfo(name="Gain", path=_HIER_PARAM_PATHS[0], variable="", value=1.0),
+        ParameterInfo(name="Value", path=_HIER_PARAM_PATHS[1], variable="", value=0.0),
+    ]
 
     _HIER_VALUES = {p: float(i + 1) for i, p in enumerate(_HIER_PATHS)}
+    _PARAM_VALUES = {
+        f"{_HIER_PARAM_PATHS[0]}/Gain": 1.0,
+        f"{_HIER_PARAM_PATHS[1]}/Value": 0.0,
+    }
 
     def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._HIER_VALUES.get(n, 0.0) for n in names)
 
-
-def test_common_prefix(check) -> None:
-    check.that(_common_prefix([]), "==", "")
-    check.that(_common_prefix(["a/b/c"]), "==", "a/b/")
-    check.that(
-        _common_prefix(["Model/Sub/CAN_Control/x", "Model/Sub/CAN_Main/y"]),
-        "==",
-        "Model/Sub/",
-    )
+    def get_parameters_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
+        return tuple(self._PARAM_VALUES.get(n, 0.0) for n in names)
 
 
 def test_split_signal_path_hierarchy(check) -> None:
-    prefix = "Model/Sub/"
-    evt, fld = _split_signal_path("Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1", prefix)
-    check.that(evt, "==", "CAN_Control/CH00/Data_1_TRIM")
-    check.that(fld, "==", "Data_1_RAW")
+    evt, fld = _split_signal_path("Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW/port1")
+    check.that(evt, "==", "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW")
+    check.that(fld, "==", "port1")
 
 
 def test_split_signal_path_preserves_case(check) -> None:
-    evt, fld = _split_signal_path("Prefix/Block_A/Signal_X/port1", "Prefix/")
-    check.that(evt, "==", "Block_A")
-    check.that(fld, "==", "Signal_X")
+    evt, fld = _split_signal_path("Prefix/Block_A/Signal_X/port1")
+    check.that(evt, "==", "Prefix/Block_A/Signal_X")
+    check.that(fld, "==", "port1")
 
 
 def test_split_signal_path_fallbacks(check) -> None:
-    evt, fld = _split_signal_path("port1", "")
+    evt, fld = _split_signal_path("port1")
     check.that(evt, "==", "signals")
+    check.that(fld, "==", "port1")
 
-    evt, fld = _split_signal_path("single_name", "")
+    evt, fld = _split_signal_path("single_name")
     check.that(evt, "==", "signals")
     check.that(fld, "==", "single_name")
 
@@ -394,16 +400,21 @@ def test_discover_builds_hierarchical_events(check) -> None:
     monitor = _make_monitor(bridge)
     monitor.start()
 
-    mapping = monitor._trace_signals
-    check.that(len(mapping), "==", 3)
+    check.that(len(monitor._trace_signals), "==", 3)
+    check.that(len(monitor._trace_params), "==", 2)
 
-    events = {evt for _, evt, _ in mapping}
-    check.that("CAN_Control/CH00/Data_1_TRIM" in events, "is true")
-    check.that("CAN_Main/CH00_Main/Data_2" in events, "is true")
+    sig_events = {evt for _, evt, _ in monitor._trace_signals}
+    check.that("Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW" in sig_events, "is true")
+    check.that("Model/Sub/CAN_Main/CH00_Main/Data_2/Out1" in sig_events, "is true")
 
-    fields_trim = [fld for _, evt, fld in mapping if evt == "CAN_Control/CH00/Data_1_TRIM"]
-    check.that("Data_1_RAW" in fields_trim, "is true")
-    check.that("Data_1_SWITCH" in fields_trim, "is true")
+    for _, _, fld in monitor._trace_signals:
+        check.that(fld, "==", "port1")
+
+    gain_evt = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_GAIN"
+    bias_evt = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_BIAS"
+    param_map = {(evt, fld) for _, evt, fld in monitor._trace_params}
+    check.that((gain_evt, "Gain") in param_map, "is true")
+    check.that((bias_evt, "Value") in param_map, "is true")
     monitor.stop()
 
 
@@ -433,10 +444,10 @@ def test_hierarchical_source_log(check) -> None:
     monitor = _make_monitor(bridge)
     monitor.start()
 
-    evt_name = "CAN_Control/CH00/Data_1_TRIM"
+    evt_name = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW"
     logged = False
     try:
-        monitor.source.log(evt_name, {"Data_1_RAW": 1.0, "Data_1_SWITCH": 2.0})
+        monitor.source.log(evt_name, {"port1": 1.0})
         logged = True
     except Exception as exc:
         check.that(False, "is true", f"source.log raised: {exc}")
@@ -463,28 +474,41 @@ def test_actions_expose_full_paths_not_event_names(check) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_poll_cycle_traces_signals(check) -> None:
+def test_poll_cycle_traces_signals_and_params(check) -> None:
     """Simulate one iteration of the run() poll loop end-to-end."""
     bridge = HierarchicalMockBridge()
     monitor = _make_monitor(bridge)
     monitor.start()
 
-    names = tuple(path for path, _, _ in monitor._trace_signals)
-    check.that(len(names), "==", 3)
+    sig_names = tuple(path for path, _, _ in monitor._trace_signals)
+    param_names = tuple(path for path, _, _ in monitor._trace_params)
+    check.that(len(sig_names), "==", 3)
+    check.that(len(param_names), "==", 2)
 
-    values = bridge.get_signals_by_name(names)
     by_event: dict[str, dict[str, float]] = {}
+
+    values = bridge.get_signals_by_name(sig_names)
     for (_, evt, fld), val in zip(monitor._trace_signals, values, strict=False):
         by_event.setdefault(evt, {})[fld] = val
+
+    pvalues = bridge.get_parameters_by_name(param_names)
+    for (_, evt, fld), val in zip(monitor._trace_params, pvalues, strict=False):
+        by_event.setdefault(evt, {})[fld] = val
+
     for evt, data in by_event.items():
         monitor.source.log(evt, data)
 
-    check.that(len(by_event), "==", 2)
-    trim_data = by_event.get("CAN_Control/CH00/Data_1_TRIM", {})
-    check.that("Data_1_RAW" in trim_data, "is true")
-    check.that("Data_1_SWITCH" in trim_data, "is true")
-    check.that(trim_data["Data_1_RAW"], "==", 1.0)
-    check.that(trim_data["Data_1_SWITCH"], "==", 2.0)
+    raw_evt = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_RAW"
+    check.that(raw_evt in by_event, "is true")
+    check.that(by_event[raw_evt]["port1"], "==", 1.0)
+
+    gain_evt = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_GAIN"
+    check.that(gain_evt in by_event, "is true")
+    check.that(by_event[gain_evt]["Gain"], "==", 1.0)
+
+    bias_evt = "Model/Sub/CAN_Control/CH00/Data_1_TRIM/Data_1_BIAS"
+    check.that(bias_evt in by_event, "is true")
+    check.that(by_event[bias_evt]["Value"], "==", 0.0)
     monitor.stop()
 
 
