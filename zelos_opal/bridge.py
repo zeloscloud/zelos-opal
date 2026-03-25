@@ -86,9 +86,58 @@ class LiveBridge:
     # ------------------------------------------------------------------
 
     def connect(self, project_path: str) -> None:
+        logger.info("Configured project_path: %r", project_path or "(empty)")
+
+        active_projects = self._get_active_projects()
+        # Filter to projects that actually contain models
+        with_models = [p for p in active_projects if p[4] > 0]
+
+        if not project_path and with_models:
+            if len(with_models) == 1:
+                project_path = with_models[0][0]
+                logger.info("Auto-discovered active project: %s", project_path)
+            else:
+                paths = [p[0] for p in with_models]
+                raise RuntimeError(
+                    f"Multiple active RT-LAB projects found: {paths}. "
+                    "Set 'project_path' in the extension config to choose one."
+                )
+        elif not project_path:
+            skipped = len(active_projects) - len(with_models)
+            msg = "No project_path configured and no active RT-LAB projects with models found."
+            if skipped:
+                msg += f" ({skipped} project(s) with 0 models were ignored.)"
+            msg += " Set 'project_path' in the extension config."
+            raise RuntimeError(msg)
+
+        logger.info("Calling OpenProject(%r)", project_path)
         self._api.OpenProject(project_path)
         self._connected = True
         logger.info("Connected to RT-LAB project: %s", project_path)
+
+    def _get_active_projects(self) -> list[tuple]:
+        """Return list of active projects, logging details for diagnostics."""
+        try:
+            active = self._api.GetActiveProjects()
+        except Exception:
+            logger.warning("GetActiveProjects unavailable", exc_info=True)
+            return []
+
+        logger.info("GetActiveProjects returned %d project(s)", len(active))
+        for proj in active:
+            path, inst_id, machine, ip, n_models, models = proj
+            logger.info(
+                "  project=%s  instance_id=%s  machine=%s  ip=%s  models=%d",
+                path,
+                inst_id,
+                machine,
+                ip,
+                n_models,
+            )
+            for m in models:
+                m_path, m_id, m_state = m
+                logger.info("    model=%s  id=%s  state=%s", m_path, m_id, m_state)
+        return list(active)
 
     def disconnect(self) -> None:
         if self._connected:

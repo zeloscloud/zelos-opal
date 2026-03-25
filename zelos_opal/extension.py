@@ -32,11 +32,13 @@ from zelos_opal.constants import (
 
 logger = logging.getLogger(__name__)
 
-_TRANSITIONAL_STATES = frozenset({
-    ModelState.COMPILING,
-    ModelState.LOADING,
-    ModelState.RESETTING,
-})
+_TRANSITIONAL_STATES = frozenset(
+    {
+        ModelState.COMPILING,
+        ModelState.LOADING,
+        ModelState.RESETTING,
+    }
+)
 
 
 def _split_signal_path(path: str) -> tuple[str, str]:

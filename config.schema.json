@@ -7,9 +7,9 @@
     "project_path": {
       "type": "string",
       "title": "Project File",
-      "description": "Path to the RT-LAB project (.llp) file",
+      "description": "Path to the RT-LAB project (.llp) file. Leave blank to auto-connect to the active project.",
       "ui:widget": "file-picker",
-      "ui:placeholder": "C:/path/to/model.llp"
+      "ui:placeholder": "C:/path/to/model.llp (optional — auto-discovers active project)"
     },
     "poll_interval": {
       "type": "number",

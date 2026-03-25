@@ -168,6 +168,50 @@ def set_variable(name: str, value: float) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Example: dedicated per-signal actions (no dropdown, hardcoded paths)
+#
+# These demonstrate how to build a focused panel for a single channel.
+# The Zelos App caches form inputs in the layout, so each panel instance
+# remembers its configuration.  For models with many channels, either
+# duplicate these with different paths or use the generic actions above
+# whose dropdown selections are also cached per-panel.
+# ---------------------------------------------------------------------------
+
+_CH00_DATA_1 = "Automation_Demo/sm_master/CAN_Control/CH00_Control/Data_1_TRIM_Block"
+
+
+@action("CH00 Data_1 Enable", "Toggle error injection on CH00 Data_1")
+@action.boolean("enabled", widget="toggle", default=False, title="Error Active")
+def ch00_data1_enable(enabled: bool) -> dict[str, Any]:
+    value = 1.0 if enabled else 0.0
+    path = f"{_CH00_DATA_1}/Data_1_ENABLE/Value"
+    _monitor.set_parameters((path,), (value,))
+    return {"message": f"Data_1 error {'ON' if enabled else 'OFF'}"}
+
+
+@action("CH00 Data_1 Set Gain", "Set gain for CH00 Data_1 error injection")
+@action.number("value", title="Gain", default=1.0)
+def ch00_data1_gain(value: float) -> dict[str, Any]:
+    path = f"{_CH00_DATA_1}/Data_1_GAIN/Gain"
+    _monitor.set_parameters((path,), (value,))
+    return {"message": f"Data_1 Gain = {value}"}
+
+
+@action("CH00 Data_1 Set Bias", "Set bias for CH00 Data_1 error injection")
+@action.number("value", title="Bias", default=0.0)
+def ch00_data1_bias(value: float) -> dict[str, Any]:
+    path = f"{_CH00_DATA_1}/Data_1_BIAS/Value"
+    _monitor.set_parameters((path,), (value,))
+    return {"message": f"Data_1 Bias = {value}"}
+
+
+@action("CH00 Data_1 Read RAW", "Read raw signal value for CH00 Data_1")
+def ch00_data1_read_raw() -> dict[str, Any]:
+    path = f"{_CH00_DATA_1}/Data_1_RAW/port1"
+    return _monitor.read_signals((path,))
+
+
+# ---------------------------------------------------------------------------
 # Action registry
 # ---------------------------------------------------------------------------
 
@@ -183,4 +227,8 @@ _actions = [
     list_variables,
     read_variable,
     set_variable,
+    ch00_data1_enable,
+    ch00_data1_gain,
+    ch00_data1_bias,
+    ch00_data1_read_raw,
 ]
