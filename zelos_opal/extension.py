@@ -32,6 +32,12 @@ from zelos_opal.constants import (
 
 logger = logging.getLogger(__name__)
 
+_TRANSITIONAL_STATES = frozenset({
+    ModelState.COMPILING,
+    ModelState.LOADING,
+    ModelState.RESETTING,
+})
+
 
 def _split_signal_path(path: str) -> tuple[str, str]:
     """Split a hierarchical path into ``(event_name, field_name)``.
@@ -212,9 +218,10 @@ class OpalMonitor:
                 prev_state = self.model_state
 
             by_event: dict[str, dict[str, float]] = {}
+            param_safe = self.model_state not in _TRANSITIONAL_STATES
 
-            # Parameters are readable in most states (NOT_LOADABLE and up)
-            if param_names:
+            # Parameters are readable in settled states only
+            if param_names and param_safe:
                 try:
                     pvalues = self._bridge.get_parameters_by_name(param_names)
                     for (_, evt, fld), val in zip(
