@@ -22,12 +22,18 @@ if __name__ == "__main__":
 
     monitor = OpalMonitor(config)
 
+    logger.info("Starting zelos-opal")
+    monitor.start()
+
     actions.init(monitor)
-    actions.register()
+    try:
+        actions.register()
+    except Exception:
+        logger.exception("Action registration failed (utility actions may still work)")
 
-    zelos_sdk.init(name="zelos_opal", actions=True)
+    zelos_sdk.init(name="opal", actions=True)
 
-    handler = TraceLoggingHandler("zelos_opal_logger")
+    handler = TraceLoggingHandler("opal_log")
     logging.getLogger().addHandler(handler)
 
     def shutdown_handler(signum: int, frame: FrameType | None) -> None:
@@ -37,6 +43,4 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
-    logger.info("Starting zelos-opal")
-    monitor.start()
     monitor.run()

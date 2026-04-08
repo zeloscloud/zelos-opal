@@ -132,18 +132,19 @@ class OpalMonitor:
 
         self._dispatch(_impl)
 
-    def read_variable(self, name: str) -> dict[str, float]:
+    def read_variable(self, name: str) -> dict[str, Any]:
         infos = self._dispatch(self._bridge.get_variables_description)
         for v in infos:
             if v.name == name:
                 return {name: v.value}
-        raise ValueError(f"Variable not found: {name}")
+        return {"error": f"Variable not found: {name}"}
 
-    def set_variable(self, name: str, value: float) -> None:
+    def set_variable(self, name: str, value: float) -> dict[str, str]:
         var = next((v for v in self.variable_infos if v.name == name), None)
         if var is None:
-            raise ValueError(f"Variable not found: {name}")
+            return {"error": f"Variable not found: {name}"}
         self._dispatch(self._bridge.set_variable, var.var_id, value)
+        return {"message": f"Set {name} = {value}"}
 
     # ------------------------------------------------------------------
     # Main-thread command dispatch
@@ -188,8 +189,15 @@ class OpalMonitor:
     def start(self) -> None:
         logger.info("Starting OPAL-RT monitor")
         self.running = True
-        self._bridge.connect(self.config.get("project_path", ""))
-        self._discover()
+        try:
+            self._bridge.connect(self.config.get("project_path", ""))
+        except Exception:
+            logger.exception("Failed to connect to RT-LAB (continuing with empty model)")
+            return
+        try:
+            self._discover()
+        except Exception:
+            logger.exception("Discovery failed (continuing with partial data)")
 
     def stop(self) -> None:
         logger.info("Stopping OPAL-RT monitor")

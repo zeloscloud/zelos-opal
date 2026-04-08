@@ -1,50 +1,34 @@
 """Zelos actions for the OPAL-RT extension.
 
-Free-standing ``@action`` functions with dynamic dropdowns.  All RT-LAB
-interaction is routed through the shared ``_monitor`` which handles
-thread-safety internally — actions stay pure and simple.
+Utility actions (status, list, poll) are registered under the bare ``opal``
+namespace.  Per-signal/parameter/variable actions are generated dynamically
+at startup from the RT-LAB discovery data and registered under nested
+namespaces such as ``opal/read/signal/<path>``.
+
+All RT-LAB interaction is routed through the shared ``_monitor`` which
+handles thread-safety internally.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from zelos_sdk import action, actions_registry
+
+logger = logging.getLogger(__name__)
 
 _monitor: Any = None
 
 
 def init(monitor: Any) -> None:
-    """Set the shared monitor instance (called once at startup)."""
+    """Set the shared monitor instance (called once after discovery)."""
     global _monitor  # noqa: PLW0603
     _monitor = monitor
 
 
-def register() -> None:
-    """Register all OPAL actions with the Zelos SDK."""
-    for fn in _actions:
-        actions_registry.register(fn)
-
-
 # ---------------------------------------------------------------------------
-# Dynamic choices providers (read cached data — always thread-safe)
-# ---------------------------------------------------------------------------
-
-
-def _signal_choices() -> list[str]:
-    return [s.path for s in _monitor.signal_infos] if _monitor else []
-
-
-def _control_signal_choices() -> list[str]:
-    return [s.path for s in _monitor.control_signal_infos] if _monitor else []
-
-
-def _parameter_choices() -> list[str]:
-    return [f"{p.path}/{p.name}" for p in _monitor.param_infos] if _monitor else []
-
-
-# ---------------------------------------------------------------------------
-# Status
+# Utility actions (registered under bare service name)
 # ---------------------------------------------------------------------------
 
 
@@ -68,11 +52,6 @@ def set_poll_interval(seconds: float) -> dict[str, Any]:
     return {"message": f"Poll interval set to {seconds}s", "poll_interval": seconds}
 
 
-# ---------------------------------------------------------------------------
-# Signals
-# ---------------------------------------------------------------------------
-
-
 @action("List Signals", "List all signals available in the model")
 def list_signals() -> dict[str, Any]:
     infos = _monitor.signal_infos
@@ -90,6 +69,53 @@ def list_signals() -> dict[str, Any]:
     }
 
 
+@action("List Parameters", "List all block parameters in the model")
+def list_parameters() -> dict[str, Any]:
+    infos = _monitor.param_infos
+    return {
+        "count": len(infos),
+        "parameters": [
+            {"name": p.name, "path": p.path, "variable": p.variable, "value": p.value}
+            for p in infos
+        ],
+    }
+
+
+@action("List Variables", "List MATLAB workspace variables (if available)")
+def list_variables() -> dict[str, Any]:
+    infos = _monitor.variable_infos
+    return {
+        "count": len(infos),
+        "variables": [{"name": v.name, "value": v.value} for v in infos],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dynamic choices providers (read cached data — always thread-safe)
+# ---------------------------------------------------------------------------
+
+
+def _signal_choices() -> list[str]:
+    return [s.path for s in _monitor.signal_infos] if _monitor else []
+
+
+def _control_signal_choices() -> list[str]:
+    return [s.path for s in _monitor.control_signal_infos] if _monitor else []
+
+
+def _parameter_choices() -> list[str]:
+    return [f"{p.path}/{p.name}" for p in _monitor.param_infos] if _monitor else []
+
+
+def _variable_choices() -> list[str]:
+    return [v.name for v in _monitor.variable_infos] if _monitor else []
+
+
+# ---------------------------------------------------------------------------
+# Generic dropdown actions (select from discovered items)
+# ---------------------------------------------------------------------------
+
+
 @action("Read Signal", "Read current value of a signal")
 @action.select("name", choices=_signal_choices, title="Signal")
 def read_signal(name: str) -> dict[str, Any]:
@@ -102,23 +128,6 @@ def read_signal(name: str) -> dict[str, Any]:
 def set_signal(name: str, value: float) -> dict[str, Any]:
     _monitor.set_signals((name,), (value,))
     return {"message": f"Set {name} = {value}"}
-
-
-# ---------------------------------------------------------------------------
-# Parameters
-# ---------------------------------------------------------------------------
-
-
-@action("List Parameters", "List all block parameters in the model")
-def list_parameters() -> dict[str, Any]:
-    infos = _monitor.param_infos
-    return {
-        "count": len(infos),
-        "parameters": [
-            {"name": p.name, "path": p.path, "variable": p.variable, "value": p.value}
-            for p in infos
-        ],
-    }
 
 
 @action("Read Parameter", "Read current value of a parameter")
@@ -135,24 +144,6 @@ def set_parameter(name: str, value: float) -> dict[str, Any]:
     return {"message": f"Set {name} = {value}"}
 
 
-# ---------------------------------------------------------------------------
-# Variables (MATLAB workspace — best-effort, not all models define these)
-# ---------------------------------------------------------------------------
-
-
-def _variable_choices() -> list[str]:
-    return [v.name for v in _monitor.variable_infos] if _monitor else []
-
-
-@action("List Variables", "List MATLAB workspace variables (if available)")
-def list_variables() -> dict[str, Any]:
-    infos = _monitor.variable_infos
-    return {
-        "count": len(infos),
-        "variables": [{"name": v.name, "value": v.value} for v in infos],
-    }
-
-
 @action("Read Variable", "Read current value of a MATLAB variable")
 @action.select("name", choices=_variable_choices, title="Variable")
 def read_variable(name: str) -> dict[str, Any]:
@@ -163,72 +154,140 @@ def read_variable(name: str) -> dict[str, Any]:
 @action.select("name", choices=_variable_choices, title="Variable")
 @action.number("value", title="Value")
 def set_variable(name: str, value: float) -> dict[str, Any]:
-    _monitor.set_variable(name, value)
-    return {"message": f"Set {name} = {value}"}
+    return _monitor.set_variable(name, value)
 
 
-# ---------------------------------------------------------------------------
-# Example: dedicated per-signal actions (no dropdown, hardcoded paths)
-#
-# These demonstrate how to build a focused panel for a single channel.
-# The Zelos App caches form inputs in the layout, so each panel instance
-# remembers its configuration.  For models with many channels, either
-# duplicate these with different paths or use the generic actions above
-# whose dropdown selections are also cached per-panel.
-# ---------------------------------------------------------------------------
-
-_CH00_DATA_1 = "Automation_Demo/sm_master/CAN_Control/CH00_Control/Data_1_TRIM_Block"
-
-
-@action("CH00 Data_1 Enable", "Toggle error injection on CH00 Data_1")
-@action.boolean("enabled", widget="toggle", default=False, title="Error Active")
-def ch00_data1_enable(enabled: bool) -> dict[str, Any]:
-    value = 1.0 if enabled else 0.0
-    path = f"{_CH00_DATA_1}/Data_1_ENABLE/Value"
-    _monitor.set_parameters((path,), (value,))
-    return {"message": f"Data_1 error {'ON' if enabled else 'OFF'}"}
-
-
-@action("CH00 Data_1 Set Gain", "Set gain for CH00 Data_1 error injection")
-@action.number("value", title="Gain", default=1.0)
-def ch00_data1_gain(value: float) -> dict[str, Any]:
-    path = f"{_CH00_DATA_1}/Data_1_GAIN/Gain"
-    _monitor.set_parameters((path,), (value,))
-    return {"message": f"Data_1 Gain = {value}"}
-
-
-@action("CH00 Data_1 Set Bias", "Set bias for CH00 Data_1 error injection")
-@action.number("value", title="Bias", default=0.0)
-def ch00_data1_bias(value: float) -> dict[str, Any]:
-    path = f"{_CH00_DATA_1}/Data_1_BIAS/Value"
-    _monitor.set_parameters((path,), (value,))
-    return {"message": f"Data_1 Bias = {value}"}
-
-
-@action("CH00 Data_1 Read RAW", "Read raw signal value for CH00 Data_1")
-def ch00_data1_read_raw() -> dict[str, Any]:
-    path = f"{_CH00_DATA_1}/Data_1_RAW/port1"
-    return _monitor.read_signals((path,))
-
-
-# ---------------------------------------------------------------------------
-# Action registry
-# ---------------------------------------------------------------------------
-
-_actions = [
+_UTILITY_ACTIONS = [
     get_status,
     set_poll_interval,
     list_signals,
+    list_parameters,
+    list_variables,
     read_signal,
     set_signal,
-    list_parameters,
     read_parameter,
     set_parameter,
-    list_variables,
     read_variable,
     set_variable,
-    ch00_data1_enable,
-    ch00_data1_gain,
-    ch00_data1_bias,
-    ch00_data1_read_raw,
 ]
+
+
+# ---------------------------------------------------------------------------
+# Action factories — each returns a decorated action function
+# ---------------------------------------------------------------------------
+
+
+def _leaf(path: str) -> str:
+    """Return the last segment of a ``/``-delimited path."""
+    return path.rsplit("/", 1)[-1]
+
+
+def _dynamic_action(fn: Any, title: str, desc: str) -> Any:
+    """Decorate *fn* as an action while suppressing SDK auto-registration.
+
+    The SDK's ``action()`` decorator auto-registers regular functions in the
+    global registry (using ``__name__``).  Setting ``__qualname__`` to contain
+    a ``.`` makes it look like an instance method, which the SDK skips.
+    We then register explicitly via ``actions_registry.register(fn, name=…)``.
+    """
+    fn.__qualname__ = f"_dynamic.{fn.__name__}"
+    return action(title, desc)(fn)
+
+
+def _make_read_signal(path: str) -> Any:
+    def _fn() -> dict[str, Any]:
+        return _monitor.read_signals((path,))
+
+    _fn.__name__ = f"read_sig_{id(_fn)}"
+    return _dynamic_action(_fn, f"Read {_leaf(path)}", f"Read signal {path}")
+
+
+def _make_set_signal(path: str) -> Any:
+    @action.number("value", title="Value")
+    def _fn(value: float) -> dict[str, Any]:
+        _monitor.set_signals((path,), (value,))
+        return {"message": f"Set {path} = {value}"}
+
+    _fn.__name__ = f"set_sig_{id(_fn)}"
+    return _dynamic_action(_fn, f"Set {_leaf(path)}", f"Set control signal {path}")
+
+
+def _make_read_parameter(api_path: str) -> Any:
+    def _fn() -> dict[str, Any]:
+        return _monitor.read_parameters((api_path,))
+
+    _fn.__name__ = f"read_param_{id(_fn)}"
+    return _dynamic_action(_fn, f"Read {api_path}", f"Read parameter {api_path}")
+
+
+def _make_set_parameter(api_path: str) -> Any:
+    @action.number("value", title="Value")
+    def _fn(value: float) -> dict[str, Any]:
+        _monitor.set_parameters((api_path,), (value,))
+        return {"message": f"Set {api_path} = {value}"}
+
+    _fn.__name__ = f"set_param_{id(_fn)}"
+    return _dynamic_action(_fn, f"Set {api_path}", f"Set parameter {api_path}")
+
+
+def _make_read_variable(name: str) -> Any:
+    def _fn() -> dict[str, Any]:
+        return _monitor.read_variable(name)
+
+    _fn.__name__ = f"read_var_{id(_fn)}"
+    return _dynamic_action(_fn, f"Read {name}", f"Read variable {name}")
+
+
+def _make_set_variable(name: str) -> Any:
+    @action.number("value", title="Value")
+    def _fn(value: float) -> dict[str, Any]:
+        return _monitor.set_variable(name, value)
+
+    _fn.__name__ = f"set_var_{id(_fn)}"
+    return _dynamic_action(_fn, f"Set {name}", f"Set variable {name}")
+
+
+# ---------------------------------------------------------------------------
+# Registration — generates dynamic actions from discovery data
+# ---------------------------------------------------------------------------
+
+
+def register() -> None:
+    """Register utility + dynamically generated actions with the Zelos SDK."""
+    for fn in _UTILITY_ACTIONS:
+        actions_registry.register(fn)
+
+    if _monitor is None:
+        return
+
+    counts: dict[str, int] = {}
+    errors = 0
+
+    def _try_register(factory, path: str, namespace: str) -> None:
+        nonlocal errors
+        try:
+            actions_registry.register(factory(path), name=f"{namespace}/{path}")
+            counts[namespace] = counts.get(namespace, 0) + 1
+        except Exception:
+            errors += 1
+            logger.warning("Failed to register %s/%s", namespace, path, exc_info=True)
+
+    for s in _monitor.signal_infos:
+        _try_register(_make_read_signal, s.path, "read/signal")
+
+    for s in _monitor.control_signal_infos:
+        _try_register(_make_set_signal, s.path, "set/signal")
+
+    for p in _monitor.param_infos:
+        api_path = f"{p.path}/{p.name}"
+        _try_register(_make_read_parameter, api_path, "read/parameter")
+        _try_register(_make_set_parameter, api_path, "set/parameter")
+
+    for v in _monitor.variable_infos:
+        _try_register(_make_read_variable, v.name, "read/variable")
+        _try_register(_make_set_variable, v.name, "set/variable")
+
+    summary = ", ".join(f"{c} {ns}" for ns, c in counts.items()) or "none"
+    logger.info("Registered dynamic actions: %s", summary)
+    if errors:
+        logger.warning("Skipped %d action(s) due to errors", errors)

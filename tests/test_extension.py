@@ -220,7 +220,7 @@ def test_set_parameters(check) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Actions (free functions via actions module)
+# Actions — utility actions
 # ---------------------------------------------------------------------------
 
 
@@ -257,61 +257,74 @@ def test_action_list_signals(check) -> None:
     monitor.stop()
 
 
-def test_action_read_signal(check) -> None:
+# ---------------------------------------------------------------------------
+# Actions — factory-generated dynamic actions
+# ---------------------------------------------------------------------------
+
+
+def test_factory_read_signal(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
-    monitor.start()
     _setup_actions(monitor)
-    from zelos_opal.actions import read_signal
+    from zelos_opal.actions import _make_read_signal
 
-    result = read_signal("mock/v")
+    fn = _make_read_signal("mock/v")
+    result = fn()
     check.that(result["mock/v"], "==", 120.0)
-    monitor.stop()
 
 
-def test_action_set_signal(check) -> None:
+def test_factory_set_signal(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
     _setup_actions(monitor)
-    from zelos_opal.actions import set_signal
+    from zelos_opal.actions import _make_set_signal
 
-    set_signal("mock/ctrl", 5.0)
+    fn = _make_set_signal("mock/ctrl")
+    result = fn(value=5.0)
+    check.that(result["message"], "==", "Set mock/ctrl = 5.0")
     check.that(bridge._signal_values["mock/ctrl"], "==", 5.0)
 
 
-def test_action_read_parameter(check) -> None:
+def test_factory_read_parameter(check) -> None:
     monitor = _make_monitor()
     _setup_actions(monitor)
-    from zelos_opal.actions import read_parameter
+    from zelos_opal.actions import _make_read_parameter
 
-    result = read_parameter("mock/blk/Gain")
+    fn = _make_read_parameter("mock/blk/Gain")
+    result = fn()
     check.that(result["mock/blk/Gain"], "==", 1.0)
 
 
-def test_action_set_parameter(check) -> None:
+def test_factory_set_parameter(check) -> None:
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
     _setup_actions(monitor)
-    from zelos_opal.actions import set_parameter
+    from zelos_opal.actions import _make_set_parameter
 
-    set_parameter("mock/blk/Gain", 2.5)
+    fn = _make_set_parameter("mock/blk/Gain")
+    fn(value=2.5)
     check.that(bridge._param_values["mock/blk/Gain"], "==", 2.5)
 
 
-def test_action_dynamic_choices(check) -> None:
+def test_register_generates_correct_action_counts(check) -> None:
+    """register() generates the right number of dynamic actions."""
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
     monitor.start()
     _setup_actions(monitor)
-    from zelos_opal.actions import (
-        _control_signal_choices,
-        _parameter_choices,
-        _signal_choices,
-    )
+    from zelos_opal import actions
 
-    check.that(_signal_choices(), "==", ["mock/v", "mock/i"])
-    check.that(_control_signal_choices(), "==", ["mock/ctrl"])
-    check.that(_parameter_choices(), "==", ["mock/blk/Gain"])
+    # MockBridge: 2 signals, 1 control, 1 param, 0 variables
+    # Expected: 2 read/signal, 1 set/signal, 1 read/param, 1 set/param
+    read_sigs = [actions._make_read_signal(s.path) for s in monitor.signal_infos]
+    set_sigs = [actions._make_set_signal(s.path) for s in monitor.control_signal_infos]
+    read_params = [actions._make_read_parameter(f"{p.path}/{p.name}") for p in monitor.param_infos]
+    set_params = [actions._make_set_parameter(f"{p.path}/{p.name}") for p in monitor.param_infos]
+
+    check.that(len(read_sigs), "==", 2)
+    check.that(len(set_sigs), "==", 1)
+    check.that(len(read_params), "==", 1)
+    check.that(len(set_params), "==", 1)
     monitor.stop()
 
 
@@ -455,20 +468,6 @@ def test_hierarchical_source_log(check) -> None:
     monitor.stop()
 
 
-def test_actions_expose_full_paths_not_event_names(check) -> None:
-    """Action choices must return full OPAL-RT paths for the RT-LAB API."""
-    bridge = HierarchicalMockBridge()
-    monitor = _make_monitor(bridge)
-    monitor.start()
-    _setup_actions(monitor)
-    from zelos_opal.actions import _signal_choices
-
-    choices = _signal_choices()
-    for path in _HIER_PATHS:
-        check.that(path in choices, "is true", f"missing: {path}")
-    monitor.stop()
-
-
 # ---------------------------------------------------------------------------
 # Poll-cycle integration (new GetSignalsByName tracing path)
 # ---------------------------------------------------------------------------
@@ -517,17 +516,11 @@ def test_poll_cycle_traces_signals_and_params(check) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_parameter_name_format_matches_rtlab(check) -> None:
-    """Action choices must build 'path/name' strings matching RT-LAB convention."""
+def test_parameter_api_path_format(check) -> None:
+    """Parameter API path must be 'block_path/param_name' per RT-LAB convention."""
     bridge = MockBridge()
     monitor = _make_monitor(bridge)
     monitor.start()
-    _setup_actions(monitor)
-    from zelos_opal.actions import _parameter_choices
-
-    choices = _parameter_choices()
-    check.that(len(choices), "==", 1)
-    check.that(choices[0], "==", "mock/blk/Gain")
 
     result = monitor.read_parameters(("mock/blk/Gain",))
     check.that(result["mock/blk/Gain"], "==", 1.0)

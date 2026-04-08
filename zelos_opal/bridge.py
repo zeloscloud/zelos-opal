@@ -160,17 +160,21 @@ class LiveBridge:
     # ------------------------------------------------------------------
 
     def get_signals_description(self) -> list[SignalInfo]:
-        raw = self._api.GetSignalsDescription()
-        return [
-            SignalInfo(
-                signal_type=SignalType.from_raw(sig[0]),
-                signal_id=sig[1],
-                path=sig[2],
-                name=sig[3],
-                label=sig[4],
-            )
-            for sig in raw
-        ]
+        try:
+            raw = self._api.GetSignalsDescription()
+            return [
+                SignalInfo(
+                    signal_type=SignalType.from_raw(sig[0]),
+                    signal_id=sig[1],
+                    path=sig[2],
+                    name=sig[3],
+                    label=sig[4],
+                )
+                for sig in raw
+            ]
+        except Exception:
+            logger.warning("GetSignalsDescription failed", exc_info=True)
+            return []
 
     def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._api.GetSignalsByName(names))
@@ -189,28 +193,36 @@ class LiveBridge:
     # ------------------------------------------------------------------
 
     def get_control_signals_description(self) -> list[SignalInfo]:
-        raw = self._api.GetControlSignalsDescription()
-        return [
-            SignalInfo(
-                signal_type=SignalType.CONTROL,
-                signal_id=sig[1],
-                path=sig[2],
-                name=sig[3],
-                label=sig[4],
-            )
-            for sig in raw
-        ]
+        try:
+            raw = self._api.GetControlSignalsDescription()
+            return [
+                SignalInfo(
+                    signal_type=SignalType.CONTROL,
+                    signal_id=sig[1],
+                    path=sig[2],
+                    name=sig[3],
+                    label=sig[4],
+                )
+                for sig in raw
+            ]
+        except Exception:
+            logger.warning("GetControlSignalsDescription failed", exc_info=True)
+            return []
 
     # ------------------------------------------------------------------
     # Parameters
     # ------------------------------------------------------------------
 
     def get_parameters_description(self) -> list[ParameterInfo]:
-        raw = self._api.GetParametersDescription()
-        return [
-            ParameterInfo(param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4])
-            for p in raw
-        ]
+        try:
+            raw = self._api.GetParametersDescription()
+            return [
+                ParameterInfo(param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4])
+                for p in raw
+            ]
+        except Exception:
+            logger.warning("GetParametersDescription failed", exc_info=True)
+            return []
 
     def get_parameters_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._api.GetParametersByName(names))
