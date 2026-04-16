@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 _monitor: Any = None
 
 
+def _parse_value(raw: str) -> float:
+    """Parse a numeric string, accepting hex (``0x…``) notation."""
+    raw = raw.strip()
+    if raw.lower().startswith("0x"):
+        return float(int(raw, 16))
+    return float(raw)
+
+
 def init(monitor: Any) -> None:
     """Set the shared monitor instance (called once after discovery)."""
     global _monitor  # noqa: PLW0603
@@ -122,12 +130,13 @@ def read_signal(name: str) -> dict[str, Any]:
     return _monitor.read_signals((name,))
 
 
-@action("Set Signal", "Set a control signal value (dynamic signals are read-only)")
+@action("Set Signal", "Set a control signal value (accepts hex 0x…)")
 @action.select("name", choices=_control_signal_choices, title="Signal")
-@action.number("value", title="Value")
-def set_signal(name: str, value: float) -> dict[str, Any]:
-    _monitor.set_signals((name,), (value,))
-    return {"message": f"Set {name} = {value}"}
+@action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+def set_signal(name: str, value: str) -> dict[str, Any]:
+    v = _parse_value(value)
+    _monitor.set_signals((name,), (v,))
+    return {"message": f"Set {name} = {v}"}
 
 
 @action("Read Parameter", "Read current value of a parameter")
@@ -136,12 +145,13 @@ def read_parameter(name: str) -> dict[str, Any]:
     return _monitor.read_parameters((name,))
 
 
-@action("Set Parameter", "Set a block parameter value")
+@action("Set Parameter", "Set a block parameter value (accepts hex 0x…)")
 @action.select("name", choices=_parameter_choices, title="Parameter")
-@action.number("value", title="Value")
-def set_parameter(name: str, value: float) -> dict[str, Any]:
-    _monitor.set_parameters((name,), (value,))
-    return {"message": f"Set {name} = {value}"}
+@action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+def set_parameter(name: str, value: str) -> dict[str, Any]:
+    v = _parse_value(value)
+    _monitor.set_parameters((name,), (v,))
+    return {"message": f"Set {name} = {v}"}
 
 
 @action("Read Variable", "Read current value of a MATLAB variable")
@@ -150,11 +160,11 @@ def read_variable(name: str) -> dict[str, Any]:
     return _monitor.read_variable(name)
 
 
-@action("Set Variable", "Set a MATLAB workspace variable value")
+@action("Set Variable", "Set a MATLAB workspace variable value (accepts hex 0x…)")
 @action.select("name", choices=_variable_choices, title="Variable")
-@action.number("value", title="Value")
-def set_variable(name: str, value: float) -> dict[str, Any]:
-    return _monitor.set_variable(name, value)
+@action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+def set_variable(name: str, value: str) -> dict[str, Any]:
+    return _monitor.set_variable(name, _parse_value(value))
 
 
 _UTILITY_ACTIONS = [
@@ -203,10 +213,11 @@ def _make_read_signal(path: str) -> Any:
 
 
 def _make_set_signal(path: str) -> Any:
-    @action.number("value", title="Value")
-    def _fn(value: float) -> dict[str, Any]:
-        _monitor.set_signals((path,), (value,))
-        return {"message": f"Set {path} = {value}"}
+    @action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+    def _fn(value: str) -> dict[str, Any]:
+        v = _parse_value(value)
+        _monitor.set_signals((path,), (v,))
+        return {"message": f"Set {path} = {v}"}
 
     _fn.__name__ = f"set_sig_{id(_fn)}"
     return _dynamic_action(_fn, f"Set {_leaf(path)}", f"Set control signal {path}")
@@ -221,10 +232,11 @@ def _make_read_parameter(api_path: str) -> Any:
 
 
 def _make_set_parameter(api_path: str) -> Any:
-    @action.number("value", title="Value")
-    def _fn(value: float) -> dict[str, Any]:
-        _monitor.set_parameters((api_path,), (value,))
-        return {"message": f"Set {api_path} = {value}"}
+    @action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+    def _fn(value: str) -> dict[str, Any]:
+        v = _parse_value(value)
+        _monitor.set_parameters((api_path,), (v,))
+        return {"message": f"Set {api_path} = {v}"}
 
     _fn.__name__ = f"set_param_{id(_fn)}"
     return _dynamic_action(_fn, f"Set {api_path}", f"Set parameter {api_path}")
@@ -239,9 +251,9 @@ def _make_read_variable(name: str) -> Any:
 
 
 def _make_set_variable(name: str) -> Any:
-    @action.number("value", title="Value")
-    def _fn(value: float) -> dict[str, Any]:
-        return _monitor.set_variable(name, value)
+    @action.text("value", title="Value", description="Numeric value (decimal or hex 0x…)")
+    def _fn(value: str) -> dict[str, Any]:
+        return _monitor.set_variable(name, _parse_value(value))
 
     _fn.__name__ = f"set_var_{id(_fn)}"
     return _dynamic_action(_fn, f"Set {name}", f"Set variable {name}")

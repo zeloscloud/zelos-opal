@@ -280,7 +280,7 @@ def test_factory_set_signal(check) -> None:
     from zelos_opal.actions import _make_set_signal
 
     fn = _make_set_signal("mock/ctrl")
-    result = fn(value=5.0)
+    result = fn(value="5.0")
     check.that(result["message"], "==", "Set mock/ctrl = 5.0")
     check.that(bridge._signal_values["mock/ctrl"], "==", 5.0)
 
@@ -302,7 +302,7 @@ def test_factory_set_parameter(check) -> None:
     from zelos_opal.actions import _make_set_parameter
 
     fn = _make_set_parameter("mock/blk/Gain")
-    fn(value=2.5)
+    fn(value="2.5")
     check.that(bridge._param_values["mock/blk/Gain"], "==", 2.5)
 
 
