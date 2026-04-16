@@ -34,17 +34,27 @@ class ModelState(enum.IntEnum):
 class SignalType(enum.IntEnum):
     """OP_SIGNAL_TYPE — RT-LAB signal categories."""
 
+    INVALID = -1
     ACQUISITION = 0
     DYNAMIC = 1
     CONTROL = 2
 
     @classmethod
     def from_raw(cls, value: Any) -> SignalType:
-        """Coerce an RT-LAB SWIG enum / int to a ``SignalType``."""
+        """Coerce an RT-LAB SWIG enum / int to a ``SignalType``.
+
+        Returns the matching member, or ``INVALID`` for unrecognised values
+        (logged at warning level so unexpected types surface in diagnostics).
+        """
         try:
             return cls(int(value))
         except (ValueError, TypeError):
-            return cls.DYNAMIC
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Unrecognised OP_SIGNAL_TYPE value %r — treating as INVALID", value
+            )
+            return cls.INVALID
 
 
 # ---------------------------------------------------------------------------

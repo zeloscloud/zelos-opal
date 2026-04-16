@@ -279,8 +279,37 @@ class OpalMonitor:
         self.param_infos = self._bridge.get_parameters_description()
         self.variable_infos = self._bridge.get_variables_description()
 
+        # --- diagnostics: signal type breakdown ---
+        from collections import Counter
+
+        type_counts = Counter(s.signal_type for s in self.signal_infos)
+        logger.info(
+            "GetSignalsDescription: %d total — %s",
+            len(self.signal_infos),
+            ", ".join(f"{t.name}={c}" for t, c in sorted(type_counts.items())) or "empty",
+        )
+        logger.info(
+            "GetControlSignalsDescription: %d total", len(self.control_signal_infos)
+        )
+        logger.info("GetParametersDescription: %d total", len(self.param_infos))
+        logger.info("GetVariablesDescription: %d total", len(self.variable_infos))
+
         traced_types = (SignalType.DYNAMIC, SignalType.ACQUISITION)
         output_signals = [s for s in self.signal_infos if s.signal_type in traced_types]
+        skipped_signals = [s for s in self.signal_infos if s.signal_type not in traced_types]
+
+        if skipped_signals:
+            skip_counts = Counter(s.signal_type for s in skipped_signals)
+            logger.info(
+                "Skipping %d signal(s) from tracing (not DYNAMIC/ACQUISITION): %s",
+                len(skipped_signals),
+                ", ".join(f"{t.name}={c}" for t, c in sorted(skip_counts.items())),
+            )
+            for s in skipped_signals:
+                logger.debug(
+                    "  skipped signal: type=%s path=%r name=%r",
+                    s.signal_type.name, s.path, s.name,
+                )
 
         event_fields: dict[str, dict[str, None]] = {}
         self._trace_signals = []
@@ -314,12 +343,10 @@ class OpalMonitor:
             self.source.add_event(evt, meta)
 
         logger.info(
-            "Discovered %d signals (%d traced), %d parameters (%d traced),"
-            " %d control, %d trace events",
-            len(self.signal_infos),
+            "Tracing %d/%d signals, %d/%d parameters, %d trace events",
             len(self._trace_signals),
-            len(self.param_infos),
+            len(self.signal_infos),
             len(self._trace_params),
-            len(self.control_signal_infos),
+            len(self.param_infos),
             len(event_fields),
         )

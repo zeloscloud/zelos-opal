@@ -162,16 +162,23 @@ class LiveBridge:
     def get_signals_description(self) -> list[SignalInfo]:
         try:
             raw = self._api.GetSignalsDescription()
-            return [
-                SignalInfo(
-                    signal_type=SignalType.from_raw(sig[0]),
+            logger.debug("GetSignalsDescription returned %d raw entries", len(raw))
+            results: list[SignalInfo] = []
+            for sig in raw:
+                st = SignalType.from_raw(sig[0])
+                info = SignalInfo(
+                    signal_type=st,
                     signal_id=sig[1],
                     path=sig[2],
                     name=sig[3],
                     label=sig[4],
                 )
-                for sig in raw
-            ]
+                logger.debug(
+                    "  signal: type=%s(%s) id=%s path=%r name=%r label=%r",
+                    st.name, sig[0], sig[1], sig[2], sig[3], sig[4],
+                )
+                results.append(info)
+            return results
         except Exception:
             logger.warning("GetSignalsDescription failed", exc_info=True)
             return []
@@ -195,16 +202,22 @@ class LiveBridge:
     def get_control_signals_description(self) -> list[SignalInfo]:
         try:
             raw = self._api.GetControlSignalsDescription()
-            return [
-                SignalInfo(
+            logger.debug("GetControlSignalsDescription returned %d raw entries", len(raw))
+            results: list[SignalInfo] = []
+            for sig in raw:
+                info = SignalInfo(
                     signal_type=SignalType.CONTROL,
                     signal_id=sig[1],
                     path=sig[2],
                     name=sig[3],
                     label=sig[4],
                 )
-                for sig in raw
-            ]
+                logger.debug(
+                    "  control signal: raw_type=%s id=%s path=%r name=%r label=%r",
+                    sig[0], sig[1], sig[2], sig[3], sig[4],
+                )
+                results.append(info)
+            return results
         except Exception:
             logger.warning("GetControlSignalsDescription failed", exc_info=True)
             return []
@@ -216,10 +229,18 @@ class LiveBridge:
     def get_parameters_description(self) -> list[ParameterInfo]:
         try:
             raw = self._api.GetParametersDescription()
-            return [
-                ParameterInfo(param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4])
-                for p in raw
-            ]
+            logger.debug("GetParametersDescription returned %d raw entries", len(raw))
+            results: list[ParameterInfo] = []
+            for p in raw:
+                info = ParameterInfo(
+                    param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4]
+                )
+                logger.debug(
+                    "  param: id=%s path=%r name=%r variable=%r value=%s",
+                    p[0], p[1], p[2], p[3], p[4],
+                )
+                results.append(info)
+            return results
         except Exception:
             logger.warning("GetParametersDescription failed", exc_info=True)
             return []
@@ -243,7 +264,13 @@ class LiveBridge:
     def get_variables_description(self) -> list[VariableInfo]:
         try:
             raw = self._api.GetVariablesDescription()
-            return [VariableInfo(var_id=v[0], name=v[1], value=float(v[2])) for v in raw]
+            logger.debug("GetVariablesDescription returned %d raw entries", len(raw))
+            results: list[VariableInfo] = []
+            for v in raw:
+                info = VariableInfo(var_id=v[0], name=v[1], value=float(v[2]))
+                logger.debug("  variable: id=%s name=%r value=%s", v[0], v[1], v[2])
+                results.append(info)
+            return results
         except Exception:
             logger.warning("GetVariablesDescription not available for this model", exc_info=True)
             return []
