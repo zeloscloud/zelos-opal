@@ -48,7 +48,7 @@ def get_status() -> dict[str, Any]:
 @action("Set Poll Interval", "Change delay between acquisition frames")
 @action.number(
     "seconds",
-    minimum=0.001,
+    minimum=1.0,
     maximum=60.0,
     default=1.0,
     title="Interval (seconds)",
@@ -284,19 +284,17 @@ def register() -> None:
             errors += 1
             logger.warning("Failed to register %s/%s", namespace, path, exc_info=True)
 
-    for s in _monitor.signal_infos:
-        _try_register(_make_read_signal, s.path, "read/signal")
-
+    # Per-path read actions are intentionally NOT generated — users should
+    # read via the nominal tracing pipeline.  The generic dropdown-based
+    # read_* utility actions remain available for ad-hoc reads.
     for s in _monitor.control_signal_infos:
         _try_register(_make_set_signal, s.path, "set/signal")
 
     for p in _monitor.param_infos:
         api_path = f"{p.path}/{p.name}"
-        _try_register(_make_read_parameter, api_path, "read/parameter")
         _try_register(_make_set_parameter, api_path, "set/parameter")
 
     for v in _monitor.variable_infos:
-        _try_register(_make_read_variable, v.name, "read/variable")
         _try_register(_make_set_variable, v.name, "set/variable")
 
     summary = ", ".join(f"{c} {ns}" for ns, c in counts.items()) or "none"

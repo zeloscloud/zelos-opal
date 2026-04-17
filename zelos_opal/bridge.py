@@ -175,7 +175,12 @@ class LiveBridge:
                 )
                 logger.debug(
                     "  signal: type=%s(%s) id=%s path=%r name=%r label=%r",
-                    st.name, sig[0], sig[1], sig[2], sig[3], sig[4],
+                    st.name,
+                    sig[0],
+                    sig[1],
+                    sig[2],
+                    sig[3],
+                    sig[4],
                 )
                 results.append(info)
             return results
@@ -214,7 +219,11 @@ class LiveBridge:
                 )
                 logger.debug(
                     "  control signal: raw_type=%s id=%s path=%r name=%r label=%r",
-                    sig[0], sig[1], sig[2], sig[3], sig[4],
+                    sig[0],
+                    sig[1],
+                    sig[2],
+                    sig[3],
+                    sig[4],
                 )
                 results.append(info)
             return results
@@ -232,12 +241,14 @@ class LiveBridge:
             logger.debug("GetParametersDescription returned %d raw entries", len(raw))
             results: list[ParameterInfo] = []
             for p in raw:
-                info = ParameterInfo(
-                    param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4]
-                )
+                info = ParameterInfo(param_id=p[0], path=p[1], name=p[2], variable=p[3], value=p[4])
                 logger.debug(
                     "  param: id=%s path=%r name=%r variable=%r value=%s",
-                    p[0], p[1], p[2], p[3], p[4],
+                    p[0],
+                    p[1],
+                    p[2],
+                    p[3],
+                    p[4],
                 )
                 results.append(info)
             return results

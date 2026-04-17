@@ -15,7 +15,7 @@
       "type": "number",
       "title": "Poll Interval (seconds)",
       "description": "Delay between signal reads",
-      "minimum": 0.001,
+      "minimum": 1.0,
       "maximum": 60.0,
       "default": 1.0,
       "ui:widget": "range"

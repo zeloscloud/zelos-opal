@@ -40,6 +40,8 @@ _TRANSITIONAL_STATES = frozenset(
     }
 )
 
+_MIN_POLL_INTERVAL = 1.0
+
 
 def _split_signal_path(path: str) -> tuple[str, str]:
     """Split a hierarchical path into ``(event_name, field_name)``.
@@ -174,7 +176,13 @@ class OpalMonitor:
                 event.set()
 
     def _sleep_with_drain(self, seconds: float) -> None:
-        """Sleep while remaining responsive to queued commands."""
+        """Sleep while remaining responsive to queued commands.
+
+        Enforces ``_MIN_POLL_INTERVAL`` as an absolute floor — this is the
+        last line of defence against any caller passing a zero/negative
+        duration and turning the poll loop into a hot retry spin.
+        """
+        seconds = max(seconds, _MIN_POLL_INTERVAL)
         end = time.monotonic() + seconds
         while time.monotonic() < end and self.running:
             self._drain_commands()
@@ -187,13 +195,15 @@ class OpalMonitor:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        """Connect to RT-LAB and discover the model.
+
+        A failure to connect (``OpenProject``) is non-recoverable and is
+        allowed to propagate so the extension exits with a clear error.
+        Discovery is best-effort — partial data is still useful.
+        """
         logger.info("Starting OPAL-RT monitor")
         self.running = True
-        try:
-            self._bridge.connect(self.config.get("project_path", ""))
-        except Exception:
-            logger.exception("Failed to connect to RT-LAB (continuing with empty model)")
-            return
+        self._bridge.connect(self.config.get("project_path", ""))
         try:
             self._discover()
         except Exception:
@@ -208,14 +218,22 @@ class OpalMonitor:
             logger.exception("Error disconnecting from RT-LAB")
 
     def run(self) -> None:
-        """Poll loop — reads RT-LAB signals and parameters, streams to Zelos."""
+        """Poll loop — reads RT-LAB signals and parameters, streams to Zelos.
+
+        If a cycle overruns the poll interval we simply start the next one
+        immediately; ticks are never fabricated to "catch up".  Transient
+        read errors are logged each cycle (rate-limited by the poll floor);
+        ``get_model_state`` failures propagate out since they indicate a
+        non-recoverable connection issue.
+        """
         prev_state: ModelState | None = None
         sig_names = tuple(path for path, _, _ in self._trace_signals)
         param_names = tuple(path for path, _, _ in self._trace_params)
 
         while self.running:
-            poll = self.config.get("poll_interval", 1.0)
+            poll = max(self.config.get("poll_interval", 1.0), _MIN_POLL_INTERVAL)
             self._drain_commands()
+
             self.model_state = self._bridge.get_model_state()
             self.source.model_info.log(
                 state=self.model_state.value,
@@ -230,28 +248,18 @@ class OpalMonitor:
             by_event: dict[str, dict[str, float]] = {}
             param_safe = self.model_state not in _TRANSITIONAL_STATES
 
-            # Parameters are readable in settled states only
             if param_names and param_safe:
                 try:
                     pvalues = self._bridge.get_parameters_by_name(param_names)
-                    for (_, evt, fld), val in zip(
-                        self._trace_params,
-                        pvalues,
-                        strict=False,
-                    ):
+                    for (_, evt, fld), val in zip(self._trace_params, pvalues, strict=False):
                         by_event.setdefault(evt, {})[fld] = val
                 except Exception:
                     logger.exception("Parameter read error")
 
-            # Signals require RUNNING state
             if self.model_state == ModelState.RUNNING and sig_names:
                 try:
                     values = self._bridge.get_signals_by_name(sig_names)
-                    for (_, evt, fld), val in zip(
-                        self._trace_signals,
-                        values,
-                        strict=False,
-                    ):
+                    for (_, evt, fld), val in zip(self._trace_signals, values, strict=False):
                         by_event.setdefault(evt, {})[fld] = val
                 except Exception:
                     logger.exception("Signal read error")
@@ -288,9 +296,7 @@ class OpalMonitor:
             len(self.signal_infos),
             ", ".join(f"{t.name}={c}" for t, c in sorted(type_counts.items())) or "empty",
         )
-        logger.info(
-            "GetControlSignalsDescription: %d total", len(self.control_signal_infos)
-        )
+        logger.info("GetControlSignalsDescription: %d total", len(self.control_signal_infos))
         logger.info("GetParametersDescription: %d total", len(self.param_infos))
         logger.info("GetVariablesDescription: %d total", len(self.variable_infos))
 
@@ -308,7 +314,9 @@ class OpalMonitor:
             for s in skipped_signals:
                 logger.debug(
                     "  skipped signal: type=%s path=%r name=%r",
-                    s.signal_type.name, s.path, s.name,
+                    s.signal_type.name,
+                    s.path,
+                    s.name,
                 )
 
         event_fields: dict[str, dict[str, None]] = {}
