@@ -20,6 +20,15 @@
       "default": 1.0,
       "ui:widget": "range"
     },
+    "param_chunk_size": {
+      "type": "integer",
+      "title": "Parameter Chunk Size",
+      "description": "Names per GetParametersByName call. Each poll cycle reads one chunk and advances; a full refresh takes (param_count / chunk_size) * poll_interval seconds. Smaller chunks keep signal cadence tighter; larger chunks refresh faster overall. Sweep summaries are logged at INFO (per-chunk timings at DEBUG) — tune from real workload data. Set actions trigger an immediate async read-back regardless of chunk size.",
+      "minimum": 1,
+      "maximum": 10000,
+      "default": 100,
+      "ui:widget": "range"
+    },
     "rtlab_path": {
       "type": "string",
       "title": "RT-LAB Install Path",

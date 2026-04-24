@@ -191,6 +191,15 @@ class LiveBridge:
     def get_signals_by_name(self, names: tuple[str, ...]) -> tuple[float, ...]:
         return tuple(self._api.GetSignalsByName(names))
 
+    def get_signals_by_id(self, signal_type: int, signal_ids: tuple[int, ...]) -> tuple[float, ...]:
+        """Read signal values by numeric id.
+
+        ``GetSignalsById`` is cheaper than ``GetSignalsByName`` at scale since
+        RT-LAB skips name-resolution, but it only accepts IDs of a single
+        ``OP_SIGNAL_TYPE`` per call — so callers must group ids by type.
+        """
+        return tuple(self._api.GetSignalsById(signal_type, signal_ids))
+
     def set_signals_by_name(self, names: tuple[str, ...], values: tuple[float, ...]) -> None:
         self._api.SetSignalsByName(names, values)
 
